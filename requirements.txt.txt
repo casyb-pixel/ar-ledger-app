@@ -1,9 +1,0 @@
-streamlit
-pandas
-sqlite3
-fpdf
-matplotlib
-altair
-streamlit-authenticator
-stripe
-bcrypt
