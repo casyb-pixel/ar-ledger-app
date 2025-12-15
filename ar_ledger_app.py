@@ -307,8 +307,8 @@ def create_checkout_session(customer_id):
                 'trial_period_days': 30, # 30 Day Free Trial
             },
             # In production, change this URL to your live site
-            success_url='http://localhost:8501/?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url='http://localhost:8501/',
+            success_url='success_url='https://ar-ledger-app.streamlit.app/?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url='https://ar-ledger-app.streamlit.app/',
         )
         return session.url, None
     except Exception as e:
@@ -886,3 +886,4 @@ if st.session_state.authenticated and st.session_state.user_id:
 st.markdown("---")
 
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
+
