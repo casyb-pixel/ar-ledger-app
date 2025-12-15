@@ -5,7 +5,7 @@ import datetime
 import smtplib
 import random
 import string
-import stripe # Make sure to pip install stripe
+import stripe 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fpdf import FPDF
@@ -23,33 +23,35 @@ import bcrypt
 st.set_page_config(page_title="AR Ledger App", layout="wide")
 
 # STRIPE KEYS (READ FROM SECRETS.TOML)
-# Check for secrets.toml keys first (used on Streamlit Cloud)
-if "STRIPE_SECRET_KEY" in st.secrets:
+# Check for LIVE keys first. If not found, fall back to TEST keys.
+if "STRIPE_LIVE_SECRET_KEY" in st.secrets and st.secrets["STRIPE_LIVE_SECRET_KEY"].startswith('sk_live'):
+    stripe.api_key = st.secrets["STRIPE_LIVE_SECRET_KEY"]
+    STRIPE_PUBLISHABLE_KEY = st.secrets["STRIPE_LIVE_PUBLISHABLE_KEY"]
+    os.environ['STRIPE_SECRET_KEY'] = stripe.api_key # Set env var for compatibility
+    st.info("⚠️ App is running in **LIVE MODE** (Real transactions).")
+elif "STRIPE_SECRET_KEY" in st.secrets:
+    # Fallback to Test Keys from secrets.toml
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
     STRIPE_PUBLISHABLE_KEY = st.secrets["STRIPE_PUBLISHABLE_KEY"]
-    # We must also set the OS Environment variable for compatibility with some libraries
-    # although Stripe usually reads stripe.api_key directly.
-    os.environ['STRIPE_SECRET_KEY'] = st.secrets["STRIPE_SECRET_KEY"]
+    os.environ['STRIPE_SECRET_KEY'] = stripe.api_key
+    st.warning("App is running in **TEST MODE** (No real transactions).")
 else:
-    # Fallback for local testing if running outside Streamlit Cloud
-    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_51SNdNlC20flbf1hAK2LiwwJyfC4LdDiOdd8qMcM6xd3cWqENcvkIaUkiHrb0I0wLoNHW0KpGFDSU75TVojacWAMo00eyGw6dfh")
-    STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_51SNdNlC20flbf1hAp0FoQLTppgIGuXzGEIWavR41ib3qHhlks5dpuoNV7gMnR5haNees5MPawAlhDKEyWHGWfI4B00ZGgwZmxi")
+    # Fallback for local console testing if secrets.toml is missing
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_51...fallback")
+    STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_51...fallback")
+    st.warning("App is running in **FALLBACK TEST MODE**.")
+
 
 STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
-
-# ... rest of the code is unchanged
 
 # Branding
 BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 BB_LOGO_PATH = "bb_logo.png" 
 DB_FILE = "ar_ledger.db"
-USER_LOGOS_DIR = "user_logos"
-
-if not os.path.exists(USER_LOGOS_DIR):
-    os.makedirs(USER_LOGOS_DIR)
 
 # --- DATABASE CONNECTION ---
 def get_db_connection():
+    # If the database file is missing, init_db will run below
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     return conn
 
@@ -59,7 +61,7 @@ conn = get_db_connection()
 def init_db():
     c = conn.cursor()
     
-    # USERS: Includes Stripe and Referral fields
+    # USERS: Updated logo_path to logo_data BLOB for cloud persistence
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
@@ -68,12 +70,12 @@ def init_db():
         logo_data BLOB,
         terms_conditions TEXT,
         company_name TEXT,
-        company_address TEXT,
+        company_address TEXT TEXT,
         company_phone TEXT,
         company_website TEXT,
         tax_id TEXT,
         default_payment_instructions TEXT,
-        subscription_status TEXT DEFAULT 'Inactive', -- Default is Inactive until they pay
+        subscription_status TEXT DEFAULT 'Inactive', 
         stripe_customer_id TEXT,
         stripe_subscription_id TEXT,
         referral_code TEXT UNIQUE,
@@ -157,6 +159,7 @@ init_db()
 
 def generate_referral_code():
     """Generates a random 8-character string for referrals."""
+    # Removed REF- prefix for simpler data
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 def hash_password(password):
@@ -170,13 +173,16 @@ def send_email(to_email, subject, body):
 def generate_pdf_invoice(invoice_data, user_logo_data, company_info, terms, theme='default'):
     pdf = FPDF()
     pdf.add_page()
-    # ... (content remains the same until Header section)
-
+    
+    pdf.set_font("Arial", "I", 8)
+    pdf.set_text_color(200, 200, 200)
+    pdf.cell(0, 5, BB_WATERMARK, ln=1, align='C')
+    pdf.ln(5)
+    
     pdf.set_text_color(0, 0, 0)
     
-    # Header: LOGO DISPLAY CHANGE
+    # Header: LOGO DISPLAY CHANGE - Uses temp file for FPDF compatibility
     if user_logo_data:
-        # Save the binary data to a temporary file, as FPDF needs a file path
         temp_logo_path = f"temp_logo_{random.randint(0, 99999)}.png"
         try:
             with open(temp_logo_path, "wb") as f:
@@ -292,7 +298,6 @@ def create_stripe_customer(email, name):
 
 def create_checkout_session(customer_id):
     try:
-        # Fetch the Price ID using the Lookup Key "standard_monthly"
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
         if not prices.data:
             return None, "Price Lookup Key not found in Stripe. Please check your Stripe Dashboard."
@@ -310,7 +315,7 @@ def create_checkout_session(customer_id):
             subscription_data={
                 'trial_period_days': 30, # 30 Day Free Trial
             },
-            # --- UPDATED URLS ---
+            # --- UPDATED URLS TO LIVE APP ---
             success_url='https://ar-ledger-app.streamlit.app/?session_id={CHECKOUT_SESSION_ID}',
             cancel_url='https://ar-ledger-app.streamlit.app/',
             # --- END UPDATED URLS ---
@@ -376,14 +381,12 @@ if not st.session_state.authenticated:
             username = st.session_state["username"].strip()
             
             c = conn.cursor()
-            # We fetch stripe_customer_id to check status later
             c.execute("SELECT id, subscription_status, stripe_customer_id FROM users WHERE username = ? COLLATE NOCASE", (username,))
             user_record = c.fetchone()
             
             if user_record:
                 db_id, sub_status, stripe_cid = user_record
                 
-                # We authenticate them, but the "Gatekeeper" logic comes later
                 st.session_state.user_id = db_id
                 st.session_state.stripe_cid = stripe_cid
                 st.session_state.sub_status = sub_status
@@ -405,7 +408,6 @@ if not st.session_state.authenticated:
             new_pass = st.text_input("Password", type="password")
             new_email = st.text_input("Email").strip()
             
-            # --- REFERRAL INPUT ---
             referral_input = st.text_input("Referral Code (Optional)")
             
             st.markdown("[View Terms and Conditions](https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf)")
@@ -417,21 +419,14 @@ if not st.session_state.authenticated:
                 if accept_terms:
                     if new_user and new_pass and new_email:
                         try:
-                            # 1. Hash Password
                             hashed_pw = hash_password(new_pass)
-                            
-                            # 2. Generate Own Referral Code
                             my_ref_code = generate_referral_code()
-                            
-                            # 3. Create Stripe Customer
                             stripe_cid = create_stripe_customer(new_email, new_user)
                             
                             if stripe_cid:
-                                # 4. Handle Referral Logic (Increment referrer's count)
                                 if referral_input:
                                     conn.execute("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code = ?", (referral_input,))
                                 
-                                # 5. Insert User (Status is 'Inactive' initially)
                                 c = conn.cursor()
                                 c.execute("""
                                     INSERT INTO users (username, password, email, accepted_terms, subscription_status, stripe_customer_id, referral_code, referred_by) 
@@ -440,7 +435,7 @@ if not st.session_state.authenticated:
                                 conn.commit()
                                 
                                 st.success("Account created! Please log in to start your subscription.")
-                                credentials = load_credentials() # Refresh auth
+                                credentials = load_credentials() 
                             else:
                                 st.error("Could not connect to billing system. Please try again.")
                                 
@@ -458,12 +453,10 @@ if st.session_state.authenticated and st.session_state.user_id:
     stripe_cid = st.session_state.get('stripe_cid')
     current_status = st.session_state.get('sub_status', 'Inactive')
     
-    # Check if we need to block access
     if current_status != 'Active':
         st.warning("⚠️ No Active Subscription Found")
         st.write("You are one step away! Start your 30-day free trial to access the AR Ledger.")
         
-        # 1. Button to generate Stripe Link
         if stripe_cid:
             checkout_url, err = create_checkout_session(stripe_cid)
             if checkout_url:
@@ -489,18 +482,18 @@ if st.session_state.authenticated and st.session_state.user_id:
             st.session_state.authenticated = False
             st.rerun()
             
-        st.stop() # STOP HERE if not active
+        st.stop() 
 
     # --- MAIN APP (ONLY RUNS IF ACTIVE) ---
     
     # Fetch User Config & Company Info
     c = conn.cursor()
-    # CHANGE: Replaced logo_path with logo_data
+    # Fetch logo_data (BLOB) instead of logo_path
     c.execute("SELECT logo_data, terms_conditions, email, company_name, company_address, company_phone, referral_code, referral_count FROM users WHERE id = ?", (user_id,))
     user_data = c.fetchone()
     
     if user_data:
-        user_logo_data = user_data[0] # NEW VARIABLE NAME
+        user_logo_data = user_data[0] # The logo image bytes
         user_terms = user_data[1] or "Standard Terms & Conditions applied."
         user_email = user_data[2]
         company_name = user_data[3] or "My Company"
@@ -540,7 +533,7 @@ if st.session_state.authenticated and st.session_state.user_id:
         with d_col1:
             st.subheader("Financial Dashboard")
         with d_col2:
-            # CHANGE: Display logo from data
+            # Display logo from data
             if user_logo_data:
                 st.image(user_logo_data, width=150)
             else:
@@ -743,7 +736,8 @@ if st.session_state.authenticated and st.session_state.user_id:
                         'number': inv_num, 'amount': amount, 'date': inv_date, 
                         'description': desc, 'tax': tax, 'discount': discount
                     }
-                    pdf_bytes = generate_pdf_invoice(inv_data, user_logo, company_info, user_terms)
+                    # FIXED: Passed user_logo_data instead of user_logo
+                    pdf_bytes = generate_pdf_invoice(inv_data, user_logo_data, company_info, user_terms)
                     
                     st.session_state['last_invoice_pdf'] = pdf_bytes
                     st.session_state['last_invoice_num'] = inv_num
@@ -837,11 +831,28 @@ if st.session_state.authenticated and st.session_state.user_id:
     elif page == "Settings":
         st.subheader("Settings")
         
-        # New: Referral Tracker
         st.info(f"🎁 **Refer & Earn:** You have referred **{my_ref_count}** people so far! Share your code: `{my_ref_code}`")
+        
+        st.write("### Company Profile")
+        with st.form("company_info_form"):
+            c_name = st.text_input("Company Name", value=company_name)
+            c_addr = st.text_input("Company Address", value=company_address)
+            c_phone = st.text_input("Company Phone", value=company_phone)
+            
+            if st.form_submit_button("Save Company Info"):
+                conn.execute("""
+                    UPDATE users 
+                    SET company_name = ?, company_address = ?, company_phone = ? 
+                    WHERE id = ?
+                """, (c_name, c_addr, c_phone, user_id))
+                conn.commit()
+                st.success("Company info updated! This will appear on your Invoices and Dashboard.")
+                st.rerun()
+
         st.divider()
         st.write("### Branding")
-        logo_upload = st.file_uploader("Upload Company Logo (PNG/JPG)")
+        # FIXED: Added unique key to prevent DuplicateElementId error
+        logo_upload = st.file_uploader("Upload Company Logo (PNG/JPG)", key="branding_logo_uploader")
         if logo_upload:
             # NEW LOGIC: Read file data directly into memory (bytes)
             logo_bytes = logo_upload.read()
@@ -851,20 +862,9 @@ if st.session_state.authenticated and st.session_state.user_id:
             conn.commit()
             st.success("Logo uploaded and saved to database! It will appear on your next Invoice.")
             st.rerun()
-
-        st.divider()
-        st.write("### Branding")
-        logo_upload = st.file_uploader("Upload Company Logo (PNG/JPG)")
-        if logo_upload:
-            file_path = os.path.join(USER_LOGOS_DIR, f"{user_id}_{logo_upload.name}")
-            with open(file_path, "wb") as f:
-                f.write(logo_upload.getbuffer())
             
-            conn.execute("UPDATE users SET logo_path = ? WHERE id = ?", (file_path, user_id))
-            conn.commit()
-            st.success("Logo updated! It will appear on your next Invoice.")
-            st.rerun()
-
+        # DELETED the old, broken, duplicate logo upload section
+        
         st.divider()
         st.write("### Terms & Conditions")
         current_terms = user_terms
@@ -889,7 +889,6 @@ if st.session_state.authenticated and st.session_state.user_id:
 
 # --- FOOTER ---
 st.markdown("---")
-
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
 
 
