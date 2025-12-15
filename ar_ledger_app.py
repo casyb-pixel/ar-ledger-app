@@ -22,10 +22,22 @@ import bcrypt
 # --- CONFIGURATION & STRIPE SETUP ---
 st.set_page_config(page_title="AR Ledger App", layout="wide")
 
-# STRIPE KEYS (TEST MODE)
-stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
-STRIPE_PUBLISHABLE_KEY = "pk_test_51SNdNlC20flbf1hAp0FoQLTppgIGuXzGEIWavR41ib3qHhlks5dpuoNV7gMnR5haNees5MPawAlhDKEyWHGWfI4B00ZGgwZmxi"
-STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" # Ensure this matches your Stripe Product Lookup Key
+# STRIPE KEYS (READ FROM SECRETS.TOML)
+# Check for secrets.toml keys first (used on Streamlit Cloud)
+if "STRIPE_SECRET_KEY" in st.secrets:
+    stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
+    STRIPE_PUBLISHABLE_KEY = st.secrets["STRIPE_PUBLISHABLE_KEY"]
+    # We must also set the OS Environment variable for compatibility with some libraries
+    # although Stripe usually reads stripe.api_key directly.
+    os.environ['STRIPE_SECRET_KEY'] = st.secrets["STRIPE_SECRET_KEY"]
+else:
+    # Fallback for local testing if running outside Streamlit Cloud
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_51SNdNlC20flbf1hAK2LiwwJyfC4LdDiOdd8qMcM6xd3cWqENcvkIaUkiHrb0I0wLoNHW0KpGFDSU75TVojacWAMo00eyGw6dfh")
+    STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_51SNdNlC20flbf1hAp0FoQLTppgIGuXzGEIWavR41ib3qHhlks5dpuoNV7gMnR5haNees5MPawAlhDKEyWHGWfI4B00ZGgwZmxi")
+
+STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
+
+# ... rest of the code is unchanged
 
 # Branding
 BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
@@ -872,4 +884,5 @@ if st.session_state.authenticated and st.session_state.user_id:
 
 # --- FOOTER ---
 st.markdown("---")
+
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
