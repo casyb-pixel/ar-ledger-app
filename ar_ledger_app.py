@@ -65,7 +65,7 @@ def init_db():
         username TEXT UNIQUE,
         password TEXT,
         email TEXT,
-        logo_path TEXT,
+        logo_data BLOB,
         terms_conditions TEXT,
         company_name TEXT,
         company_address TEXT,
@@ -167,23 +167,27 @@ def send_email(to_email, subject, body):
     print(f"--- EMAIL SENT ---\nTo: {to_email}\nSubject: {subject}\nBody: {body}\n--------------------")
     st.toast(f"Email sent to {to_email}")
 
-def generate_pdf_invoice(invoice_data, user_logo, company_info, terms, theme='default'):
+def generate_pdf_invoice(invoice_data, user_logo_data, company_info, terms, theme='default'):
     pdf = FPDF()
     pdf.add_page()
-    
-    pdf.set_font("Arial", "I", 8)
-    pdf.set_text_color(200, 200, 200)
-    pdf.cell(0, 5, BB_WATERMARK, ln=1, align='C')
-    pdf.ln(5)
-    
+    # ... (content remains the same until Header section)
+
     pdf.set_text_color(0, 0, 0)
     
-    # Header
-    if user_logo and os.path.exists(user_logo):
+    # Header: LOGO DISPLAY CHANGE
+    if user_logo_data:
+        # Save the binary data to a temporary file, as FPDF needs a file path
+        temp_logo_path = f"temp_logo_{random.randint(0, 99999)}.png"
         try:
-            pdf.image(user_logo, 10, 15, 33) 
-        except Exception:
-            pass
+            with open(temp_logo_path, "wb") as f:
+                f.write(user_logo_data)
+            pdf.image(temp_logo_path, 10, 15, 33) 
+        except Exception as e:
+            print(f"PDF Image Error: {e}")
+        finally:
+            # Clean up the temporary file
+            if os.path.exists(temp_logo_path):
+                os.remove(temp_logo_path)
             
     pdf.set_xy(120, 15)
     pdf.set_font("Arial", "B", 12)
@@ -491,11 +495,12 @@ if st.session_state.authenticated and st.session_state.user_id:
     
     # Fetch User Config & Company Info
     c = conn.cursor()
-    c.execute("SELECT logo_path, terms_conditions, email, company_name, company_address, company_phone, referral_code, referral_count FROM users WHERE id = ?", (user_id,))
+    # CHANGE: Replaced logo_path with logo_data
+    c.execute("SELECT logo_data, terms_conditions, email, company_name, company_address, company_phone, referral_code, referral_count FROM users WHERE id = ?", (user_id,))
     user_data = c.fetchone()
     
     if user_data:
-        user_logo = user_data[0]
+        user_logo_data = user_data[0] # NEW VARIABLE NAME
         user_terms = user_data[1] or "Standard Terms & Conditions applied."
         user_email = user_data[2]
         company_name = user_data[3] or "My Company"
@@ -535,8 +540,11 @@ if st.session_state.authenticated and st.session_state.user_id:
         with d_col1:
             st.subheader("Financial Dashboard")
         with d_col2:
-            if user_logo and os.path.exists(user_logo):
-                st.image(user_logo, width=150)
+            # CHANGE: Display logo from data
+            if user_logo_data:
+                st.image(user_logo_data, width=150)
+            else:
+                st.write("") # Placeholder to maintain column spacing
                 
         projects = get_user_data(user_id, "projects")
         
@@ -887,5 +895,6 @@ if st.session_state.authenticated and st.session_state.user_id:
 st.markdown("---")
 
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
+
 
 
