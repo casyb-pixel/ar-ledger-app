@@ -839,22 +839,18 @@ if st.session_state.authenticated and st.session_state.user_id:
         
         # New: Referral Tracker
         st.info(f"🎁 **Refer & Earn:** You have referred **{my_ref_count}** people so far! Share your code: `{my_ref_code}`")
-        
-        st.write("### Company Profile")
-        with st.form("company_info_form"):
-            c_name = st.text_input("Company Name", value=company_name)
-            c_addr = st.text_input("Company Address", value=company_address)
-            c_phone = st.text_input("Company Phone", value=company_phone)
+        st.divider()
+        st.write("### Branding")
+        logo_upload = st.file_uploader("Upload Company Logo (PNG/JPG)")
+        if logo_upload:
+            # NEW LOGIC: Read file data directly into memory (bytes)
+            logo_bytes = logo_upload.read()
             
-            if st.form_submit_button("Save Company Info"):
-                conn.execute("""
-                    UPDATE users 
-                    SET company_name = ?, company_address = ?, company_phone = ? 
-                    WHERE id = ?
-                """, (c_name, c_addr, c_phone, user_id))
-                conn.commit()
-                st.success("Company info updated! This will appear on your Invoices and Dashboard.")
-                st.rerun()
+            # Save the bytes (BLOB) to the database
+            conn.execute("UPDATE users SET logo_data = ? WHERE id = ?", (logo_bytes, user_id))
+            conn.commit()
+            st.success("Logo uploaded and saved to database! It will appear on your next Invoice.")
+            st.rerun()
 
         st.divider()
         st.write("### Branding")
@@ -895,6 +891,7 @@ if st.session_state.authenticated and st.session_state.user_id:
 st.markdown("---")
 
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
+
 
 
 
