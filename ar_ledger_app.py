@@ -88,9 +88,10 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER,
         number INTEGER, amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
     )''')
+    # Added 'notes' column for payment details
     c.execute('''CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER,
-        amount REAL, date TEXT
+        amount REAL, date TEXT, notes TEXT
     )''')
     conn.commit()
 
@@ -100,9 +101,19 @@ init_db()
 def hash_password(password):
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
+# CUSTOM PDF CLASS (Fixes Watermark Issue)
+class InvoicePDF(FPDF):
+    def footer(self):
+        # Position at 1.5 cm from bottom
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(180, 180, 180)
+        self.cell(0, 10, BB_WATERMARK, 0, 0, 'C')
+
 def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms):
-    pdf = FPDF()
+    pdf = InvoicePDF() # Use our custom class
     pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=20)
     
     if logo_data:
         try:
@@ -145,8 +156,6 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
         pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1)
         pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, terms)
     
-    pdf.set_y(-15); pdf.set_text_color(180, 180, 180)
-    pdf.cell(0, 10, BB_WATERMARK, ln=0, align='C')
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def create_checkout_session(customer_id):
@@ -183,8 +192,6 @@ if "authentication_status" not in st.session_state:
 
 if st.session_state["authentication_status"] is False or st.session_state["authentication_status"] is None:
     # --- LOGIN SCREEN ---
-    
-    # 1. DISPLAY LOGO
     if os.path.exists("bb_logo.png"):
         st.image("bb_logo.png", width=200)
     else:
@@ -211,12 +218,9 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
             u = st.text_input("Username")
             p = st.text_input("Password", type="password")
             e = st.text_input("Email")
-            
-            # REFERRAL CODE
             ref_code = st.text_input("Referral Code (Optional)")
             
             st.markdown("---")
-            # TERMS ACKNOWLEDGEMENT
             st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
             terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.")
             
@@ -225,19 +229,12 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
                     st.error("You must agree to the Terms and Conditions to proceed.")
                 elif u and p and e:
                     try:
-                        # 1. Handle Referral Logic
                         if ref_code:
-                            # Check if referral code exists
                             referrer = conn.execute("SELECT id FROM users WHERE referral_code=?", (ref_code,)).fetchone()
-                            if referrer:
-                                conn.execute("UPDATE users SET referral_count = referral_count + 1 WHERE id=?", (referrer[0],))
-                            else:
-                                st.warning("Referral code not found (Account will still be created).")
+                            if referrer: conn.execute("UPDATE users SET referral_count = referral_count + 1 WHERE id=?", (referrer[0],))
 
-                        # 2. Create User
                         h_p = hash_password(p)
                         cid = create_stripe_customer(e, u)
-                        # Generate their own referral code
                         my_ref = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                         
                         conn.execute("INSERT INTO users (username, password, email, stripe_customer_id, referral_code) VALUES (?,?,?,?,?)", 
@@ -272,7 +269,7 @@ else:
     u_data = conn.execute("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=?", (user_id,)).fetchone()
     logo, c_name, c_addr, terms = u_data
     
-    page = st.sidebar.radio("Navigate", ["Dashboard", "Projects", "Invoices", "Settings"])
+    page = st.sidebar.radio("Navigate", ["Dashboard", "Projects", "Invoices", "Payments", "Settings"])
     
     if page == "Dashboard":
         st.title("Executive Dashboard")
@@ -304,6 +301,7 @@ else:
             is_tax_exempt = st.checkbox("Client is Tax Exempt?")
             scope = st.text_area("Scope of Work")
             
+            # Using form_submit_button strictly
             if st.form_submit_button("Create Project"):
                 conn.execute("""INSERT INTO projects 
                              (user_id, name, client_name, quoted_price, start_date, duration, 
@@ -323,8 +321,7 @@ else:
             row = projs[projs['name']==p].iloc[0]
             
             tax_label = "Tax ($)"
-            if row['is_tax_exempt'] == 1:
-                tax_label = "Tax ($) - [EXEMPT]"
+            if row['is_tax_exempt'] == 1: tax_label = "Tax ($) - [EXEMPT]"
             
             with st.form("inv"):
                 a = st.number_input("Amount", min_value=0.0)
@@ -345,6 +342,33 @@ else:
                     conn.commit()
             
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
+    
+    # --- NEW PAYMENTS TAB ---
+    elif page == "Payments":
+        st.subheader("Receive Payment")
+        projs = pd.read_sql_query("SELECT * FROM projects WHERE user_id=?", conn, params=(user_id,))
+        
+        if not projs.empty:
+            p = st.selectbox("Apply to Project", projs['name'])
+            row = projs[projs['name']==p].iloc[0]
+            
+            with st.form("pay_form"):
+                amt = st.number_input("Payment Amount ($)", min_value=0.01)
+                pay_date = st.date_input("Date Received")
+                # Notes field for Invoice # or Check #
+                notes = st.text_input("Notes (Invoice #, Check #, etc.)")
+                
+                if st.form_submit_button("Log Payment"):
+                    conn.execute("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (?,?,?,?,?)", 
+                                 (user_id, int(row['id']), amt, str(pay_date), notes))
+                    conn.commit()
+                    st.success("Payment Logged Successfully")
+                    st.rerun()
+            
+            # Show Payment History
+            st.markdown("### Payment History")
+            pay_hist = pd.read_sql_query("SELECT date, amount, notes FROM payments WHERE project_id=?", conn, params=(int(row['id']),))
+            st.dataframe(pay_hist)
 
     elif page == "Settings":
         st.header("Company Settings")
@@ -362,3 +386,4 @@ else:
                 conn.commit(); st.success("Settings Saved"); st.rerun()
     
     if st.sidebar.button("Logout"): authenticator.logout(); st.rerun()
+    
