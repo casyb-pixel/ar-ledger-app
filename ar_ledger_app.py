@@ -17,7 +17,7 @@ from streamlit_authenticator.utilities.exceptions import LoginError
 # --- CONFIGURATION & B&B BRANDING ---
 st.set_page_config(page_title="AR Ledger App | Balance & Build", layout="wide")
 
-# B&B Professional Palette: Navy (#2B588D) and Gold (#DAA520)
+# Professional Palette: Navy (#2B588D) and Gold (#DAA520)
 st.markdown("""
     <style>
     .stApp { background-color: #fcfcfc; }
@@ -60,45 +60,89 @@ def get_db_connection():
 conn = get_db_connection()
 
 def init_db():
+    """Initializes the database with the full schema including referral and project fields."""
     c = conn.cursor()
-    # Users Table - Fixed to include referred_by and accepted_terms
+    # Users Table with referred_by
     c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, email TEXT,
-        logo_data BLOB, terms_conditions TEXT, company_name TEXT, company_address TEXT,
-        subscription_status TEXT DEFAULT 'Inactive', stripe_customer_id TEXT, 
-        stripe_subscription_id TEXT, referral_code TEXT UNIQUE, referred_by TEXT, 
-        referral_count INTEGER DEFAULT 0, accepted_terms BOOLEAN DEFAULT 0
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        username TEXT UNIQUE, 
+        password TEXT, 
+        email TEXT,
+        logo_data BLOB, 
+        terms_conditions TEXT, 
+        company_name TEXT, 
+        company_address TEXT,
+        subscription_status TEXT DEFAULT 'Inactive', 
+        stripe_customer_id TEXT, 
+        stripe_subscription_id TEXT, 
+        referral_code TEXT UNIQUE, 
+        referred_by TEXT, 
+        referral_count INTEGER DEFAULT 0, 
+        accepted_terms BOOLEAN DEFAULT 0
     )''')
-    # Projects Table - Updated with Site/Billing Address & Scope
+    # Projects Table with Billing/Site Address & Scope
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, client_name TEXT,
-        quoted_price REAL, start_date DATE, site_address TEXT, billing_address TEXT, 
-        scope_of_work TEXT, status TEXT DEFAULT 'Active'
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id INTEGER, 
+        name TEXT, 
+        client_name TEXT,
+        quoted_price REAL, 
+        start_date DATE, 
+        site_address TEXT, 
+        billing_address TEXT, 
+        scope_of_work TEXT, 
+        status TEXT DEFAULT 'Active',
+        FOREIGN KEY(user_id) REFERENCES users(id)
     )''')
-    # Contacts Table - Updated with Preferred Method
+    # Contacts Table
     c.execute('''CREATE TABLE IF NOT EXISTS contacts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER,
-        name TEXT, email TEXT, phone TEXT, preferred_method TEXT, is_primary BOOLEAN DEFAULT 0
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id INTEGER, 
+        project_id INTEGER,
+        name TEXT, 
+        email TEXT, 
+        phone TEXT, 
+        preferred_method TEXT, 
+        is_primary BOOLEAN DEFAULT 0,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(project_id) REFERENCES projects(id)
     )''')
     # Invoices Table
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER, 
-        number INTEGER, amount REAL, date DATE, description TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id INTEGER, 
+        project_id INTEGER, 
+        number INTEGER, 
+        amount REAL, 
+        date DATE, 
+        description TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(project_id) REFERENCES projects(id)
     )''')
     # Payments Table
     c.execute('''CREATE TABLE IF NOT EXISTS payments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER, 
-        amount REAL, date DATE, form TEXT, check_number TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id INTEGER, 
+        project_id INTEGER, 
+        amount REAL, 
+        date DATE, 
+        form TEXT, 
+        check_number TEXT,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(project_id) REFERENCES projects(id)
     )''')
     # Audit Logs
     c.execute('''CREATE TABLE IF NOT EXISTS audit_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, timestamp DATETIME
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        user_id INTEGER, 
+        action TEXT, 
+        timestamp DATETIME
     )''')
     conn.commit()
 
 init_db()
 
-# --- REUSABLE HELPERS ---
+# --- HELPER FUNCTIONS ---
 def load_credentials():
     c = conn.cursor()
     c.execute("SELECT username, password, email FROM users")
@@ -111,11 +155,16 @@ def generate_referral_code():
 def hash_password(password):
     return Hasher.hash(password)
 
+def log_audit(user_id, action):
+    conn.execute("INSERT INTO audit_logs (user_id, action, timestamp) VALUES (?, ?, ?)",
+                 (user_id, action, datetime.datetime.now()))
+    conn.commit()
+
 def generate_pdf_invoice(invoice_data, user_logo_data, company_info, project_info, terms):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 8)
-    pdf.set_text_color(43, 88, 141) # B&B Blue Palette
+    pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, BB_WATERMARK, ln=1, align='C')
     
     if user_logo_data:
@@ -175,9 +224,11 @@ def create_checkout_session(customer_id):
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
         price_id = prices.data[0].id
         session = stripe.checkout.Session.create(
-            customer=customer_id, payment_method_types=['card'],
+            customer=customer_id, 
+            payment_method_types=['card'],
             line_items=[{'price': price_id, 'quantity': 1}],
-            mode='subscription', subscription_data={'trial_period_days': 30},
+            mode='subscription', 
+            subscription_data={'trial_period_days': 30},
             success_url='https://ar-ledger-app.streamlit.app/?session_id={CHECKOUT_SESSION_ID}',
             cancel_url='https://ar-ledger-app.streamlit.app/'
         )
@@ -203,10 +254,7 @@ if not st.session_state.get("authenticated"):
             new_pass = st.text_input("Password", type="password")
             new_email = st.text_input("Email").strip()
             referral_input = st.text_input("Referral Code (Optional)")
-            
-            # --- UPDATED TERMS LINK ---
             st.markdown("[View Terms and Conditions](https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf)")
-            
             accept_terms = st.checkbox("I accept the Balance & Build Terms of Service")
             
             if st.form_submit_button("Sign Up"):
@@ -218,18 +266,17 @@ if not st.session_state.get("authenticated"):
                         conn.execute("INSERT INTO users (username, password, email, accepted_terms, subscription_status, stripe_customer_id, referral_code, referred_by) VALUES (?,?,?,?, 'Inactive', ?, ?, ?)",
                                      (new_user, hashed_pw, new_email, 1, customer.id, my_ref_code, referral_input))
                         conn.commit()
-                        st.success("Account created! Log in to begin trial.")
+                        st.success("Account created! Please log in to begin trial.")
                     except Exception as e: st.error(f"Signup failed: {e}")
-                else: st.error("Complete all fields and accept terms.")
+                else: st.error("Please fill all fields and accept terms.")
 else:
     # --- SUBSCRIPTION GATE ---
     user_id = st.session_state.user_id
     stripe_cid = st.session_state.stripe_cid
     
-    # Check for return from Stripe
+    # Handle Stripe redirect
     query_params = st.query_params
     if "session_id" in query_params:
-        # User just returned from a successful checkout
         conn.execute("UPDATE users SET subscription_status = 'Active' WHERE id = ?", (user_id,))
         conn.commit()
         st.session_state.sub_status = 'Active'
@@ -237,11 +284,9 @@ else:
         st.rerun()
 
     if st.session_state.sub_status != 'Active':
-                st.info("💎 Welcome. Activate your trial to begin.")
+        st.info("💎 Welcome. Activate your trial to begin.")
         url, _ = create_checkout_session(stripe_cid)
         st.link_button("🚀 Start 30-Day Free Trial", url)
-        
-        # Manual check button as fallback
         if st.button("Refresh Status"):
             try:
                 subs = stripe.Subscription.list(customer=stripe_cid, status='all', limit=1)
@@ -250,10 +295,7 @@ else:
                     conn.commit()
                     st.session_state.sub_status = 'Active'
                     st.rerun()
-                else:
-                    st.error("No active subscription found. Please complete the trial signup.")
-            except Exception as e:
-                st.error(f"Status check failed: {e}")
+            except Exception as e: st.error(f"Check failed: {e}")
         st.stop()
 
     # --- MAIN APP ---
@@ -264,7 +306,7 @@ else:
     page = st.sidebar.radio("Navigation", ["Dashboard", "Projects", "Contacts", "Invoices", "Payments", "Reports", "Settings"])
 
     if page == "Dashboard":
-                st.subheader("Firm Executive Summary")
+        st.subheader("Firm Executive Summary")
         inv_df = pd.read_sql_query("SELECT amount FROM invoices WHERE user_id = ?", conn, params=(user_id,))
         pay_df = pd.read_sql_query("SELECT amount FROM payments WHERE user_id = ?", conn, params=(user_id,))
         t_in = inv_df['amount'].sum() if not inv_df.empty else 0.0
@@ -274,6 +316,17 @@ else:
         c1.metric("Gross Billed", f"${t_in:,.2f}")
         c2.metric("Cash Collected", f"${t_col:,.2f}")
         c3.metric("Outstanding AR", f"${t_in - t_col:,.2f}")
+        
+        st.divider()
+        st.write("### Active Project Breakdowns")
+        projs = pd.read_sql_query("SELECT * FROM projects WHERE user_id = ?", conn, params=(user_id,))
+        for _, p in projs.iterrows():
+            with st.expander(f"Project: {p['name']} | Client: {p['client_name']}"):
+                p_id = p['id']
+                p_invoiced = conn.execute("SELECT SUM(amount) FROM invoices WHERE project_id = ?", (p_id,)).fetchone()[0] or 0.0
+                p_paid = conn.execute("SELECT SUM(amount) FROM payments WHERE project_id = ?", (p_id,)).fetchone()[0] or 0.0
+                st.write(f"**Quoted Budget:** ${p['quoted_price']:,.2f} | **Current Balance:** ${p_invoiced - p_paid:,.2f}")
+                st.write(f"**Scope:** {p['scope_of_work']}")
 
     elif page == "Projects":
         st.subheader("Manage Active Projects")
@@ -291,6 +344,22 @@ else:
                     conn.commit()
                     st.success("Project database initialized.")
                     st.rerun()
+
+    elif page == "Contacts":
+        st.subheader("Project Contacts")
+        projs = pd.read_sql_query("SELECT id, name FROM projects WHERE user_id = ?", conn, params=(user_id,))
+        if not projs.empty:
+            p_sel = st.selectbox("Assign Contact to Project", projs['name'])
+            p_id = int(projs[projs['name']==p_sel]['id'].values[0])
+            with st.form("new_c"):
+                c_name = st.text_input("Name")
+                c_email = st.text_input("Email")
+                c_pref = st.selectbox("Preferred Method", ["Email", "Phone", "Text"])
+                if st.form_submit_button("Log Contact"):
+                    conn.execute("INSERT INTO contacts (user_id, project_id, name, email, preferred_method) VALUES (?,?,?,?,?)",
+                                 (user_id, p_id, c_name, c_email, c_pref))
+                    conn.commit()
+                    st.success("Contact logged.")
 
     elif page == "Invoices":
         st.subheader("Revenue Generation")
@@ -312,7 +381,45 @@ else:
                     conn.commit()
                     st.download_button("📩 Download PDF", pdf, f"Invoice_{inv_num}.pdf")
 
+    elif page == "Payments":
+        st.subheader("Record Payment")
+        projs = pd.read_sql_query("SELECT id, name FROM projects WHERE user_id = ?", conn, params=(user_id,))
+        if not projs.empty:
+            p_sel = st.selectbox("Project", projs['name'])
+            p_id = int(projs[projs['name']==p_sel]['id'].values[0])
+            with st.form("pay"):
+                p_amt = st.number_input("Amount Received", min_value=0.01)
+                p_meth = st.selectbox("Method", ["Check", "ACH", "Cash", "Card"])
+                p_ref = st.text_input("Ref/Check #")
+                if st.form_submit_button("Record"):
+                    conn.execute("INSERT INTO payments (user_id, project_id, amount, date, form, check_number) VALUES (?,?,?,?,?,?)",
+                                 (user_id, p_id, p_amt, datetime.date.today(), p_meth, p_ref))
+                    conn.commit()
+                    st.success("Payment recorded.")
+
+    elif page == "Reports":
+        st.subheader("Financial Analytics & Export")
+        inv_df = pd.read_sql_query("SELECT date, amount FROM invoices WHERE user_id = ?", conn, params=(user_id,))
+        if not inv_df.empty:
+            inv_df['date'] = pd.to_datetime(inv_df['date'])
+            inv_df['age'] = (pd.Timestamp.now() - inv_df['date']).dt.days
+            st.altair_chart(alt.Chart(inv_df).mark_bar(color='#DAA520').encode(x='age', y='amount'), use_container_width=True)
+            st.download_button("Export Data (CSV)", inv_df.to_csv(), "ar_report.csv")
+
+    elif page == "Settings":
+        st.subheader("Firm Branding & Referrals")
+        st.info(f"🎁 Referrals: {my_ref_count} Successes | Code: {my_ref_code}")
+        with st.form("setup"):
+            n_name = st.text_input("Firm Name", value=comp_name)
+            n_addr = st.text_area("Firm Address", value=comp_addr)
+            n_logo = st.file_uploader("Firm Logo", type=['png', 'jpg'])
+            if st.form_submit_button("Sync Profile"):
+                logo_blob = n_logo.read() if n_logo else user_logo
+                conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=? WHERE id=?", (n_name, n_addr, logo_blob, user_id))
+                conn.commit()
+                st.rerun()
+
 st.sidebar.divider()
-if st.sidebar.button("Secure Logout"):
+if st.sidebar.button("Logout"):
     st.session_state.clear()
     st.rerun()
