@@ -13,7 +13,7 @@ from fpdf import FPDF
 import streamlit_authenticator as stauth
 
 # --- 1. CONFIGURATION & B&B BRANDING ---
-st.set_page_config(page_title="AR Ledger SaaS", layout="wide")
+st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
 
 # Theme Colors: Navy (#2B588D) and Gold (#DAA520)
 st.markdown("""
@@ -295,13 +295,15 @@ else:
     
     user_id = st.session_state.user_id
     
+    # --- SUBSCRIPTION GATE (PRODUCTION MODE) ---
     if st.session_state.sub_status != 'Active' and st.session_state.stripe_cid:
         st.warning("⚠️ Trial Inactive")
         url, err = create_checkout_session(st.session_state.stripe_cid)
-        if url: st.link_button("Start Subscription", url)
-        if st.button("Simulate Payment (Dev Only)"):
-            conn.execute("UPDATE users SET subscription_status='Active' WHERE id=?", (user_id,))
-            conn.commit(); st.session_state.sub_status = 'Active'; st.rerun()
+        if url: 
+            st.link_button("Start Subscription", url)
+        
+        # --- DEV BUTTON REMOVED FOR PRODUCTION ---
+        
         if st.sidebar.button("Logout"): authenticator.logout(); st.rerun()
         st.stop()
 
@@ -321,7 +323,9 @@ else:
     if page == "Dashboard":
         col_t, col_l = st.columns([4, 1])
         with col_t:
-            st.title("Executive Dashboard")
+            # DYNAMIC BRANDING: Uses "Balance & Build" if company name is missing, otherwise uses Company Name
+            display_title = f"{c_name} AR Ledger" if c_name else "Balance & Build AR Ledger"
+            st.title(display_title)
             st.caption(f"Financial Overview for {c_name or 'My Firm'}")
         with col_l:
             if logo: st.image(logo, width=150)
