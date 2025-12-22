@@ -60,6 +60,7 @@ else:
 STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
 BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 DB_FILE = "ar_ledger.db"
+TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
 # --- 2. DATABASE ENGINE ---
 def get_db_connection():
@@ -76,7 +77,6 @@ def init_db():
         stripe_customer_id TEXT, stripe_subscription_id TEXT,
         referral_code TEXT UNIQUE, referral_count INTEGER DEFAULT 0
     )''')
-    # PROJECTS: Added Billing, Site Address, Duration, Tax Exempt, PO Number
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, client_name TEXT,
         quoted_price REAL, start_date TEXT, duration INTEGER,
@@ -104,7 +104,6 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf = FPDF()
     pdf.add_page()
     
-    # Logo Logic
     if logo_data:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -112,17 +111,14 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
 
-    # Header
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
     
-    # Invoice Details
-    pdf.ln(15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141) # Navy Blue for PDF text
+    pdf.ln(15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1)
     
-    # Project & Client Info
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0)
     pdf.cell(100, 5, f"PROJECT: {project_info['name']}", ln=0)
     pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
@@ -131,30 +127,24 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf.cell(100, 5, f"Client: {project_info['client_name']}", ln=1)
     if project_info.get('po_number'):
         pdf.cell(0, 5, f"PO #: {project_info['po_number']}", ln=1, align='R')
-    else:
-        pdf.ln(1)
-        
+    
     pdf.ln(5)
     pdf.multi_cell(0, 5, f"Billing Addr: {project_info.get('billing_address', '')}")
     pdf.multi_cell(0, 5, f"Site Addr: {project_info.get('site_address', '')}")
 
-    # Description
     pdf.ln(10); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
     
-    # Totals
     pdf.ln(10)
     pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R')
     pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R')
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
     
-    # Terms
     if terms: 
         pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1)
         pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, terms)
     
-    # Watermark
     pdf.set_y(-15); pdf.set_text_color(180, 180, 180)
     pdf.cell(0, 10, BB_WATERMARK, ln=0, align='C')
     return pdf.output(dest='S').encode('latin-1', 'replace')
@@ -187,12 +177,19 @@ def load_credentials():
 credentials = load_credentials()
 authenticator = stauth.Authenticate(credentials, 'ar_ledger_cookie_v2', 'bb_key_new', 1)
 
-# --- 5. APP LOGIC ---
+# --- 5. LOGIC FLOW ---
 if "authentication_status" not in st.session_state:
     st.session_state["authentication_status"] = None
 
 if st.session_state["authentication_status"] is False or st.session_state["authentication_status"] is None:
-    st.title("Client AR Portal")
+    # --- LOGIN SCREEN ---
+    
+    # 1. DISPLAY LOGO
+    if os.path.exists("bb_logo.png"):
+        st.image("bb_logo.png", width=200)
+    else:
+        st.title("Balance & Build Consulting")
+
     tab1, tab2 = st.tabs(["Login", "Signup"])
     
     with tab1:
@@ -209,20 +206,47 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
             st.error('Username/password is incorrect')
             
     with tab2:
-        st.header("New Account")
+        st.header("Create New Account")
         with st.form("signup"):
             u = st.text_input("Username")
             p = st.text_input("Password", type="password")
             e = st.text_input("Email")
+            
+            # REFERRAL CODE
+            ref_code = st.text_input("Referral Code (Optional)")
+            
+            st.markdown("---")
+            # TERMS ACKNOWLEDGEMENT
+            st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
+            terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.")
+            
             if st.form_submit_button("Create Account"):
-                if u and p and e:
+                if not terms_agreed:
+                    st.error("You must agree to the Terms and Conditions to proceed.")
+                elif u and p and e:
                     try:
+                        # 1. Handle Referral Logic
+                        if ref_code:
+                            # Check if referral code exists
+                            referrer = conn.execute("SELECT id FROM users WHERE referral_code=?", (ref_code,)).fetchone()
+                            if referrer:
+                                conn.execute("UPDATE users SET referral_count = referral_count + 1 WHERE id=?", (referrer[0],))
+                            else:
+                                st.warning("Referral code not found (Account will still be created).")
+
+                        # 2. Create User
                         h_p = hash_password(p)
                         cid = create_stripe_customer(e, u)
-                        conn.execute("INSERT INTO users (username, password, email, stripe_customer_id) VALUES (?,?,?,?)", (u, h_p, e, cid))
+                        # Generate their own referral code
+                        my_ref = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                        
+                        conn.execute("INSERT INTO users (username, password, email, stripe_customer_id, referral_code) VALUES (?,?,?,?,?)", 
+                                     (u, h_p, e, cid, my_ref))
                         conn.commit()
                         st.success("Account Created! Please switch to Login tab.")
                     except Exception as err: st.error(f"Error: {err}")
+                else:
+                    st.warning("Please fill all fields")
 else:
     # --- MAIN APP ---
     if 'user_id' not in st.session_state:
@@ -252,8 +276,7 @@ else:
     
     if page == "Dashboard":
         st.title("Executive Dashboard")
-        if logo: 
-            st.image(logo, width=150) # Logo on Dashboard
+        if logo: st.image(logo, width=150)
         
         t_inv = conn.execute("SELECT SUM(amount) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
         t_rec = conn.execute("SELECT SUM(amount) FROM payments WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
@@ -290,7 +313,6 @@ else:
                 conn.commit()
                 st.success("Project Saved"); st.rerun()
                 
-        # Show Projects
         st.dataframe(pd.read_sql_query("SELECT name, client_name, quoted_price, start_date, po_number FROM projects WHERE user_id=?", conn, params=(user_id,)))
 
     elif page == "Invoices":
@@ -300,27 +322,21 @@ else:
             p = st.selectbox("Project", projs['name'])
             row = projs[projs['name']==p].iloc[0]
             
-            # Auto-detect Tax Status
             tax_label = "Tax ($)"
             if row['is_tax_exempt'] == 1:
                 tax_label = "Tax ($) - [EXEMPT]"
             
             with st.form("inv"):
                 a = st.number_input("Amount", min_value=0.0)
-                # If exempt, user can still override, but we indicate it
                 t = st.number_input(tax_label, value=0.0) 
                 d = st.text_area("Desc", value=row['scope_of_work'])
                 
                 if st.form_submit_button("Generate"):
                     num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
-                    
                     pdf = generate_pdf_invoice(
                         {'number': num, 'amount': a+t, 'tax': t, 'date': str(datetime.date.today()), 'description': d}, 
-                        logo, 
-                        {'name': c_name, 'address': c_addr}, 
-                        {'name': row['name'], 'client_name': row['client_name'], 
-                         'billing_address': row['billing_address'], 'site_address': row['site_address'],
-                         'po_number': row['po_number']}, 
+                        logo, {'name': c_name, 'address': c_addr}, 
+                        {'name': row['name'], 'client_name': row['client_name'], 'billing_address': row['billing_address'], 'site_address': row['site_address'], 'po_number': row['po_number']}, 
                         terms
                     )
                     st.session_state.pdf = pdf
@@ -328,26 +344,21 @@ else:
                                  (user_id, int(row['id']), num, a+t, str(datetime.date.today()), d, t))
                     conn.commit()
             
-            if "pdf" in st.session_state: 
-                st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
+            if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
 
     elif page == "Settings":
         st.header("Company Settings")
         with st.form("set"):
             cn = st.text_input("Company Name", value=c_name or "")
             ca = st.text_area("Address", value=c_addr or "")
-            
             st.markdown("---")
-            st.subheader("Invoice Customization")
-            # Terms & Conditions Field
-            t_cond = st.text_area("Terms & Conditions (Appears on Invoice Footer)", value=terms or "", height=150)
+            t_cond = st.text_area("Terms & Conditions (Appears on Invoice)", value=terms or "", height=150)
             l = st.file_uploader("Upload Logo")
             
             if st.form_submit_button("Save Settings"):
                 lb = l.read() if l else logo
                 conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=?, terms_conditions=? WHERE id=?", 
                              (cn, ca, lb, t_cond, user_id))
-                conn.commit()
-                st.success("Settings Saved"); st.rerun()
+                conn.commit(); st.success("Settings Saved"); st.rerun()
     
     if st.sidebar.button("Logout"): authenticator.logout(); st.rerun()
