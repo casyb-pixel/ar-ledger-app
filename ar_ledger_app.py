@@ -52,6 +52,9 @@ st.markdown("""
         color: white;
         border-color: #2B588D;
     }
+    
+    /* Warning Box Styling */
+    .stAlert { border: 1px solid #DAA520; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -84,7 +87,6 @@ def init_db():
         referral_code TEXT UNIQUE, referral_count INTEGER DEFAULT 0
     )''')
     
-    # PROJECTS
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, client_name TEXT,
         quoted_price REAL, start_date TEXT, duration INTEGER,
@@ -157,9 +159,9 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
         pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1)
         pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
     
-    # --- SITE ADDRESS (Right Side - Manual X Positioning to avoid overlap) ---
+    # --- SITE ADDRESS (Right Side) ---
     right_x = 110
-    current_y = 60 # Start parallel to Billing
+    current_y = 60 
     
     pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:")
@@ -178,7 +180,7 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
         pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}")
 
     # --- DESCRIPTION ---
-    pdf.set_xy(10, 95) # Move down past address blocks
+    pdf.set_xy(10, 95) 
     pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
     
@@ -425,7 +427,7 @@ else:
         st.subheader("Manage Projects")
         
         # CREATE PROJECT
-        with st.expander("Create New Project", expanded=True):
+        with st.expander("Create New Project", expanded=False):
             with st.form("new_proj"):
                 c1, c2 = st.columns(2)
                 n = c1.text_input("Project Name")
@@ -472,24 +474,35 @@ else:
                     st.success("Project Saved"); st.rerun()
 
         # DELETE / MANAGE PROJECTS
-        st.markdown("### Existing Projects")
+        st.markdown("### Project Management")
         projs = pd.read_sql_query("SELECT id, name, client_name, status, quoted_price FROM projects WHERE user_id=?", conn, params=(user_id,))
         
         if not projs.empty:
+            c_man_1, c_man_2 = st.columns([2, 2])
+            
+            with c_man_1:
+                st.markdown("#### Update Status")
+                p_update = st.selectbox("Select Project to Update", projs['name'], key="up_sel")
+                new_stat = st.selectbox("New Status", ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"], key="new_stat")
+                if st.button("Update Status"):
+                    pid = projs[projs['name'] == p_update]['id'].values[0]
+                    conn.execute("UPDATE projects SET status=? WHERE id=?", (new_stat, int(pid)))
+                    conn.commit()
+                    st.success("Status Updated"); st.rerun()
+
+            with c_man_2:
+                st.markdown("#### Delete Project")
+                p_del = st.selectbox("Select Project to Delete", projs['name'], key="del_sel")
+                if st.button("Delete Project", type="primary"):
+                    pid = projs[projs['name'] == p_del]['id'].values[0]
+                    conn.execute("DELETE FROM projects WHERE id=?", (int(pid),))
+                    conn.execute("DELETE FROM invoices WHERE project_id=?", (int(pid),))
+                    conn.execute("DELETE FROM payments WHERE project_id=?", (int(pid),))
+                    conn.commit()
+                    st.warning("Project Deleted"); st.rerun()
+            
+            st.markdown("#### All Projects")
             st.dataframe(projs, use_container_width=True)
-            
-            st.markdown("#### Remove Project")
-            c_del_1, c_del_2 = st.columns([3, 1])
-            p_to_del = c_del_1.selectbox("Select Project to Delete", projs['name'], key="del_select")
-            
-            if c_del_2.button("Delete Selected Project", type="primary"):
-                pid_del = projs[projs['name'] == p_to_del]['id'].values[0]
-                conn.execute("DELETE FROM projects WHERE id=?", (int(pid_del),))
-                conn.execute("DELETE FROM invoices WHERE project_id=?", (int(pid_del),))
-                conn.execute("DELETE FROM payments WHERE project_id=?", (int(pid_del),))
-                conn.commit()
-                st.warning(f"Deleted {p_to_del}")
-                st.rerun()
         else:
             st.info("No active projects.")
 
@@ -503,35 +516,48 @@ else:
             tax_label = "Tax ($)"
             if row['is_tax_exempt'] == 1: tax_label = "Tax ($) - [EXEMPT]"
             
-            with st.form("inv"):
-                # ADDED DATE PICKER HERE
+            # --- CLEARS ON SUBMIT NOW ---
+            with st.form("inv", clear_on_submit=True):
+                st.warning(f"⚠️ You are creating an invoice for: **{row['name']}**")
+                
                 inv_date = st.date_input("Invoice Date", value=datetime.date.today())
                 a = st.number_input("Amount", min_value=0.0)
                 t = st.number_input(tax_label, value=0.0) 
-                d = st.text_area("Desc", value=row['scope_of_work'])
                 
-                if st.form_submit_button("Generate"):
-                    num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
-                    
-                    p_info_dict = {
-                        'name': row['name'], 'client_name': row['client_name'],
-                        'billing_street': row['billing_street'], 'billing_city': row['billing_city'],
-                        'billing_state': row['billing_state'], 'billing_zip': row['billing_zip'],
-                        'site_street': row['site_street'], 'site_city': row['site_city'],
-                        'site_state': row['site_state'], 'site_zip': row['site_zip'],
-                        'po_number': row['po_number']
-                    }
-                    
-                    pdf = generate_pdf_invoice(
-                        {'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, 
-                        logo, {'name': c_name, 'address': c_addr}, 
-                        p_info_dict, 
-                        terms
-                    )
-                    st.session_state.pdf = pdf
-                    conn.execute("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (?,?,?,?,?,?,?)", 
-                                 (user_id, int(row['id']), num, a+t, str(inv_date), d, t))
-                    conn.commit()
+                # NO DEFAULT VALUE HERE
+                d = st.text_area("Desc")
+                
+                # CONFIRMATION CHECKBOX
+                confirm = st.checkbox("I verify that I am billing the correct project and amount.")
+                
+                submitted = st.form_submit_button("Generate")
+                
+                if submitted:
+                    if confirm:
+                        num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
+                        
+                        p_info_dict = {
+                            'name': row['name'], 'client_name': row['client_name'],
+                            'billing_street': row['billing_street'], 'billing_city': row['billing_city'],
+                            'billing_state': row['billing_state'], 'billing_zip': row['billing_zip'],
+                            'site_street': row['site_street'], 'site_city': row['site_city'],
+                            'site_state': row['site_state'], 'site_zip': row['site_zip'],
+                            'po_number': row['po_number']
+                        }
+                        
+                        pdf = generate_pdf_invoice(
+                            {'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, 
+                            logo, {'name': c_name, 'address': c_addr}, 
+                            p_info_dict, 
+                            terms
+                        )
+                        st.session_state.pdf = pdf
+                        conn.execute("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (?,?,?,?,?,?,?)", 
+                                     (user_id, int(row['id']), num, a+t, str(inv_date), d, t))
+                        conn.commit()
+                        st.success(f"Invoice #{num} Generated")
+                    else:
+                        st.error("Please check the verification box to proceed.")
             
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
 
@@ -543,17 +569,26 @@ else:
             p = st.selectbox("Apply to Project", projs['name'])
             row = projs[projs['name']==p].iloc[0]
             
-            with st.form("pay_form"):
+            # --- CLEARS ON SUBMIT NOW ---
+            with st.form("pay_form", clear_on_submit=True):
+                st.warning(f"⚠️ You are applying payment to: **{row['name']}**")
+                
                 amt = st.number_input("Payment Amount ($)", min_value=0.01)
                 pay_date = st.date_input("Date Received")
                 notes = st.text_input("Notes (Invoice #, Check #, etc.)")
                 
-                if st.form_submit_button("Log Payment"):
-                    conn.execute("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (?,?,?,?,?)", 
-                                 (user_id, int(row['id']), amt, str(pay_date), notes))
-                    conn.commit()
-                    st.success("Payment Logged Successfully")
-                    st.rerun()
+                confirm_pay = st.checkbox("I verify this payment belongs to this project.")
+                
+                submitted = st.form_submit_button("Log Payment")
+                
+                if submitted:
+                    if confirm_pay:
+                        conn.execute("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (?,?,?,?,?)", 
+                                     (user_id, int(row['id']), amt, str(pay_date), notes))
+                        conn.commit()
+                        st.success("Payment Logged Successfully")
+                    else:
+                        st.error("Please check the verification box to proceed.")
             
             st.markdown("### Payment History")
             pay_hist = pd.read_sql_query("SELECT date, amount, notes FROM payments WHERE project_id=?", conn, params=(int(row['id']),))
