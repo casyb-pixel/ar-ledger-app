@@ -84,14 +84,12 @@ def init_db():
         referral_code TEXT UNIQUE, referral_count INTEGER DEFAULT 0
     )''')
     
-    # PROJECTS: Updated Schema for Split Addresses
+    # PROJECTS
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, client_name TEXT,
         quoted_price REAL, start_date TEXT, duration INTEGER,
-        
         billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
         site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
-        
         is_tax_exempt INTEGER DEFAULT 0, po_number TEXT,
         status TEXT DEFAULT 'Bidding',
         scope_of_work TEXT
@@ -139,7 +137,7 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
     
-    # --- INVOICE TITLE & DATE (Below Company Info) ---
+    # --- INVOICE TITLE & DATE ---
     pdf.set_xy(120, 35)
     pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
@@ -148,29 +146,39 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     if project_info.get('po_number'):
         pdf.cell(0, 5, f"PO #: {project_info['po_number']}", ln=1, align='R')
 
-    # --- CLIENT BILLING ADDRESS (The Envelope Window Position) ---
-    # Standard window position is approx 20mm from left, 50mm from top
-    pdf.set_xy(10, 55) 
+    # --- CLIENT BILLING ADDRESS (Left Side - Window Position) ---
+    pdf.set_xy(10, 60) 
     pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10)
     
-    # Construct Client Block
+    # Left Column Data
     pdf.cell(0, 5, f"{project_info['client_name']}", ln=1)
     if project_info.get('billing_street'):
         pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1)
         pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
     
-    # --- SITE ADDRESS (Right Side / Non-Window) ---
-    pdf.set_xy(110, 55)
-    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:", ln=1)
-    pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, f"{project_info['name']}", ln=1)
+    # --- SITE ADDRESS (Right Side - Manual X Positioning to avoid overlap) ---
+    right_x = 110
+    current_y = 60 # Start parallel to Billing
+    
+    pdf.set_xy(right_x, current_y)
+    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:")
+    
+    current_y += 5
+    pdf.set_xy(right_x, current_y)
+    pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['name']}")
+    
     if project_info.get('site_street'):
-        pdf.cell(0, 5, f"{project_info['site_street']}", ln=1)
-        pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}", ln=1)
+        current_y += 5
+        pdf.set_xy(right_x, current_y)
+        pdf.cell(0, 5, f"{project_info['site_street']}")
+        
+        current_y += 5
+        pdf.set_xy(right_x, current_y)
+        pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}")
 
     # --- DESCRIPTION ---
-    pdf.set_xy(10, 90) # Move down past address blocks
+    pdf.set_xy(10, 95) # Move down past address blocks
     pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
     
@@ -496,6 +504,8 @@ else:
             if row['is_tax_exempt'] == 1: tax_label = "Tax ($) - [EXEMPT]"
             
             with st.form("inv"):
+                # ADDED DATE PICKER HERE
+                inv_date = st.date_input("Invoice Date", value=datetime.date.today())
                 a = st.number_input("Amount", min_value=0.0)
                 t = st.number_input(tax_label, value=0.0) 
                 d = st.text_area("Desc", value=row['scope_of_work'])
@@ -503,7 +513,6 @@ else:
                 if st.form_submit_button("Generate"):
                     num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
                     
-                    # Convert DB rows to Dict for PDF
                     p_info_dict = {
                         'name': row['name'], 'client_name': row['client_name'],
                         'billing_street': row['billing_street'], 'billing_city': row['billing_city'],
@@ -514,14 +523,14 @@ else:
                     }
                     
                     pdf = generate_pdf_invoice(
-                        {'number': num, 'amount': a+t, 'tax': t, 'date': str(datetime.date.today()), 'description': d}, 
+                        {'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, 
                         logo, {'name': c_name, 'address': c_addr}, 
                         p_info_dict, 
                         terms
                     )
                     st.session_state.pdf = pdf
                     conn.execute("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (?,?,?,?,?,?,?)", 
-                                 (user_id, int(row['id']), num, a+t, str(datetime.date.today()), d, t))
+                                 (user_id, int(row['id']), num, a+t, str(inv_date), d, t))
                     conn.commit()
             
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
