@@ -52,13 +52,13 @@ conn = get_db_connection()
 def init_db():
     c = conn.cursor()
 
-    # USERS: Includes Stripe and Referral fields
+    # Create tables (as before)
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
         password TEXT,
         email TEXT,
-        logo_path TEXT,
+        logo_data BLOB,
         terms_conditions TEXT,
         company_name TEXT,
         company_address TEXT,
@@ -66,7 +66,7 @@ def init_db():
         company_website TEXT,
         tax_id TEXT,
         default_payment_instructions TEXT,
-        subscription_status TEXT DEFAULT 'Inactive', -- Default is Inactive until they pay
+        subscription_status TEXT DEFAULT 'Inactive',
         stripe_customer_id TEXT,
         stripe_subscription_id TEXT,
         referral_code TEXT UNIQUE,
@@ -75,6 +75,26 @@ def init_db():
         accepted_terms BOOLEAN DEFAULT 0
     )''')
 
+    # Add missing columns if they don't exist (safe for fresh or existing DB)
+    columns_to_add = {
+        'logo_data': 'BLOB',
+        'company_name': 'TEXT',
+        'company_address': 'TEXT',
+        'company_phone': 'TEXT',
+        'company_website': 'TEXT',
+        'tax_id': 'TEXT',
+        'default_payment_instructions': 'TEXT'
+    }
+
+    # Check existing columns
+    c.execute("PRAGMA table_info(users)")
+    existing_columns = [row[1] for row in c.fetchall()]
+
+    for col_name, col_type in columns_to_add.items():
+        if col_name not in existing_columns:
+            c.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+
+    # Repeat for projects (billing_address, scope_of_work)
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -84,6 +104,8 @@ def init_db():
         start_date DATE,
         duration INTEGER,
         address TEXT,
+        billing_address TEXT,
+        scope_of_work TEXT,
         priority INTEGER,
         status TEXT DEFAULT 'Active',
         description TEXT,
@@ -91,6 +113,14 @@ def init_db():
         FOREIGN KEY(user_id) REFERENCES users(id)
     )''')
 
+    c.execute("PRAGMA table_info(projects)")
+    existing_proj = [row[1] for row in c.fetchall()]
+    if 'billing_address' not in existing_proj:
+        c.execute("ALTER TABLE projects ADD COLUMN billing_address TEXT")
+    if 'scope_of_work' not in existing_proj:
+        c.execute("ALTER TABLE projects ADD COLUMN scope_of_work TEXT")
+
+    # Repeat for contacts (preferred_method)
     c.execute('''CREATE TABLE IF NOT EXISTS contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -100,11 +130,18 @@ def init_db():
         phone TEXT,
         title TEXT,
         billing_address TEXT,
+        preferred_method TEXT,
         is_primary BOOLEAN DEFAULT 0,
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(project_id) REFERENCES projects(id)
     )''')
 
+    c.execute("PRAGMA table_info(contacts)")
+    existing_contact = [row[1] for row in c.fetchall()]
+    if 'preferred_method' not in existing_contact:
+        c.execute("ALTER TABLE contacts ADD COLUMN preferred_method TEXT")
+
+    # Other tables remain unchanged...
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -143,7 +180,6 @@ def init_db():
         timestamp DATETIME
     )''')
     conn.commit()
-init_db()
 
 # --- HELPER FUNCTIONS ---
 def generate_referral_code():
