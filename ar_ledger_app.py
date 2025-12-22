@@ -109,7 +109,7 @@ def generate_pdf_invoice(invoice_data, user_logo_data, company_info, project_inf
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 8)
-    pdf.set_text_color(43, 88, 141) # B&B Blue
+    pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, BB_WATERMARK, ln=1, align='C')
     
     if user_logo_data:
@@ -204,24 +204,20 @@ if not st.session_state.get("authenticated"):
                     try:
                         hashed_pw = hash_password(new_pass)
                         my_ref_code = generate_referral_code()
-                        # Create Stripe Customer
                         customer = stripe.Customer.create(email=new_email, name=new_user)
-                        
                         conn.execute("INSERT INTO users (username, password, email, accepted_terms, subscription_status, stripe_customer_id, referral_code, referred_by) VALUES (?,?,?,?, 'Inactive', ?, ?, ?)",
                                      (new_user, hashed_pw, new_email, 1, customer.id, my_ref_code, referral_input))
                         conn.commit()
-                        st.success("Account created! Please log in to activate your trial.")
-                    except Exception as e:
-                        st.error(f"Signup failed: {e}")
-                else:
-                    st.error("Please fill all fields and accept terms.")
+                        st.success("Account created! Log in to begin trial.")
+                    except Exception as e: st.error(f"Error: {e}")
+                else: st.error("Complete all fields.")
 else:
     # --- SUBSCRIPTION GATE ---
     if st.session_state.sub_status != 'Active':
-        st.info("💎 Welcome to Balance & Build AR Ledger. Activate your trial to begin.")
+        st.info("💎 Welcome. Activate your trial to begin.")
         url, _ = create_checkout_session(st.session_state.stripe_cid)
         st.link_button("🚀 Start 30-Day Free Trial", url)
-        if st.button("🔄 Refresh Subscription Status"): st.rerun()
+        if st.button("Check Status"): st.rerun()
         st.stop()
 
     user_id = st.session_state.user_id
@@ -229,127 +225,93 @@ else:
     user_logo, comp_name, comp_addr, u_terms, my_ref_code, my_ref_count = u_data
     
     st.sidebar.title("B&B AR Ledger")
-    page = st.sidebar.radio("Main Menu", ["Dashboard", "Projects", "Contacts", "Invoices", "Payments", "Reports", "Settings", "Help"])
+    page = st.sidebar.radio("Navigation", ["Dashboard", "Projects", "Contacts", "Invoices", "Payments", "Reports", "Settings", "Help"])
 
-    # --- DASHBOARD ---
     if page == "Dashboard":
-                st.subheader("Firm Financial Summary")
         inv_df = pd.read_sql_query("SELECT amount FROM invoices WHERE user_id = ?", conn, params=(user_id,))
         pay_df = pd.read_sql_query("SELECT amount FROM payments WHERE user_id = ?", conn, params=(user_id,))
-        
         total_in = inv_df['amount'].sum() if not inv_df.empty else 0.0
         total_col = pay_df['amount'].sum() if not pay_df.empty else 0.0
         
         c1, c2, c3 = st.columns(3)
         c1.metric("Gross Billed", f"${total_in:,.2f}")
         c2.metric("Cash Collected", f"${total_col:,.2f}")
-        c3.metric("Net Outstanding", f"${total_in - total_col:,.2f}")
+        c3.metric("Net Receivables", f"${total_in - total_col:,.2f}")
         
         st.divider()
-        st.write("### Active Project Status")
+        st.write("### Project Breakdowns")
         projs = pd.read_sql_query("SELECT * FROM projects WHERE user_id = ?", conn, params=(user_id,))
         for _, p in projs.iterrows():
             with st.expander(f"Project: {p['name']} | Client: {p['client_name']}"):
                 p_invoiced = conn.execute("SELECT SUM(amount) FROM invoices WHERE project_id = ?", (p['id'],)).fetchone()[0] or 0.0
                 p_paid = conn.execute("SELECT SUM(amount) FROM payments WHERE project_id = ?", (p['id'],)).fetchone()[0] or 0.0
-                st.write(f"**Quoted Budget:** ${p['quoted_price']:,.2f} | **Currently Owed:** ${p_invoiced - p_paid:,.2f}")
-                st.write(f"**Site Address:** {p['site_address']}")
+                st.write(f"**Quoted Budget:** ${p['quoted_price']:,.2f} | **Owed:** ${p_invoiced - p_paid:,.2f}")
+                st.write(f"**Scope:** {p['scope_of_work']}")
 
-    # --- PROJECTS ---
     elif page == "Projects":
-        st.subheader("Manage Project Inventory")
-        with st.expander("➕ Initialize New Project", expanded=True):
+        with st.expander("➕ Initialize Project", expanded=True):
             with st.form("new_p"):
                 c1, c2 = st.columns(2)
                 p_name = c1.text_input("Project Name")
-                p_client = c2.text_input("Client/Entity Name")
-                p_site = c1.text_input("Site Physical Address")
-                p_bill = c2.text_area("Billing Address (As shown on Invoice)")
-                p_scope = st.text_area("Detailed Scope of Work")
-                p_quote = st.number_input("Contract Value ($)", min_value=0.0)
-                if st.form_submit_button("Confirm Setup"):
+                p_client = c2.text_input("Client Entity")
+                p_site = c1.text_input("Site Address")
+                p_bill = c2.text_area("Billing Address")
+                p_scope = st.text_area("Scope of Work")
+                p_quote = st.number_input("Value ($)", min_value=0.0)
+                if st.form_submit_button("Save"):
                     conn.execute("INSERT INTO projects (user_id, name, client_name, site_address, billing_address, scope_of_work, quoted_price) VALUES (?,?,?,?,?,?,?)",
                                  (user_id, p_name, p_client, p_site, p_bill, p_scope, p_quote))
                     conn.commit()
-                    st.success("Project database initialized.")
                     st.rerun()
-        
-        active_projs = pd.read_sql_query("SELECT name, client_name, quoted_price FROM projects WHERE user_id = ?", conn, params=(user_id,))
-        st.dataframe(active_projs, use_container_width=True)
 
-    # --- CONTACTS ---
     elif page == "Contacts":
-        st.subheader("Entity Contacts")
         projs = pd.read_sql_query("SELECT id, name FROM projects WHERE user_id = ?", conn, params=(user_id,))
         if not projs.empty:
-            p_sel = st.selectbox("Assign Contact to Project", projs['name'])
+            p_sel = st.selectbox("Assign to Project", projs['name'])
             p_id = int(projs[projs['name']==p_sel]['id'].values[0])
             with st.form("new_c"):
-                c_name = st.text_input("Full Name")
+                c_name = st.text_input("Name")
                 c_email = st.text_input("Email")
-                c_pref = st.selectbox("Preferred Communication Method", ["Email", "Phone", "Text Message"])
-                if st.form_submit_button("Save Contact"):
-                    conn.execute("INSERT INTO contacts (user_id, project_id, name, email, preferred_method) VALUES (?,?,?,?,?)",
-                                 (user_id, p_id, c_name, c_email, c_pref))
+                c_pref = st.selectbox("Preferred Method", ["Email", "Phone", "Text"])
+                if st.form_submit_button("Log Contact"):
+                    conn.execute("INSERT INTO contacts (user_id, project_id, name, email, preferred_method) VALUES (?,?,?,?,?)", (user_id, p_id, c_name, c_email, c_pref))
                     conn.commit()
-                    st.success("Contact logged.")
+                    st.success("Logged.")
 
-    # --- INVOICES ---
     elif page == "Invoices":
-        st.subheader("Revenue Generation")
         projs = pd.read_sql_query("SELECT * FROM projects WHERE user_id = ?", conn, params=(user_id,))
         if not projs.empty:
-            p_sel = st.selectbox("Select Project for Billing", projs['name'])
+            p_sel = st.selectbox("Project", projs['name'])
             p_row = projs[projs['name']==p_sel].iloc[0]
             with st.form("inv"):
-                inv_amt = st.number_input("Invoice Amount", min_value=0.01)
-                inv_desc = st.text_area("Line Item Description", value=p_row['scope_of_work'])
-                if st.form_submit_button("Generate Official Invoice"):
+                amt = st.number_input("Amount", min_value=0.01)
+                desc = st.text_area("Description", value=p_row['scope_of_work'])
+                if st.form_submit_button("Generate"):
                     inv_num = random.randint(10000, 99999)
-                    pdf = generate_pdf_invoice({'number': inv_num, 'amount': inv_amt, 'date': datetime.date.today(), 'description': inv_desc},
+                    pdf = generate_pdf_invoice({'number': inv_num, 'amount': amt, 'date': datetime.date.today(), 'description': desc},
                                                user_logo, {'name': comp_name, 'address': comp_addr},
                                                {'name': p_row['name'], 'client_name': p_row['client_name'], 'billing_address': p_row['billing_address'], 'site_address': p_row['site_address']},
                                                u_terms)
                     conn.execute("INSERT INTO invoices (user_id, project_id, number, amount, date, description) VALUES (?,?,?,?,?,?)",
-                                 (user_id, int(p_row['id']), inv_num, inv_amt, datetime.date.today(), inv_desc))
+                                 (user_id, int(p_row['id']), inv_num, amt, datetime.date.today(), desc))
                     conn.commit()
-                    st.download_button("📩 Download PDF Invoice", pdf, f"Invoice_{inv_num}.pdf")
+                    st.download_button("📩 Download PDF", pdf, f"Invoice_{inv_num}.pdf")
 
-    # --- PAYMENTS ---
-    elif page == "Payments":
-        st.subheader("Log Cash Receipts")
-        projs = pd.read_sql_query("SELECT id, name FROM projects WHERE user_id = ?", conn, params=(user_id,))
-        if not projs.empty:
-            p_sel = st.selectbox("Select Project for Payment", projs['name'])
-            p_id = int(projs[projs['name']==p_sel]['id'].values[0])
-            with st.form("pay"):
-                p_amt = st.number_input("Amount Received", min_value=0.01)
-                p_meth = st.selectbox("Method", ["Wire/ACH", "Check", "Cash", "Credit Card"])
-                p_ref = st.text_input("Ref/Check #")
-                if st.form_submit_button("Record Payment"):
-                    conn.execute("INSERT INTO payments (user_id, project_id, amount, date, form, check_number) VALUES (?,?,?,?,?,?)",
-                                 (user_id, p_id, p_amt, datetime.date.today(), p_meth, p_ref))
-                    conn.commit()
-                    st.success("Payment synchronized.")
-
-    # --- REPORTS ---
     elif page == "Reports":
-                st.subheader("Financial Integrity Reporting")
         inv_df = pd.read_sql_query("SELECT date, amount FROM invoices WHERE user_id = ?", conn, params=(user_id,))
         if not inv_df.empty:
             inv_df['date'] = pd.to_datetime(inv_df['date'])
             inv_df['age'] = (pd.Timestamp.now() - inv_df['date']).dt.days
-            st.altair_chart(alt.Chart(inv_df).mark_bar(color='#DAA520').encode(x='age', y='amount'), use_container_width=True)
-            st.download_button("Export Aging (CSV)", inv_df.to_csv(), "ar_aging.csv")
+            st.altair_chart(alt.Chart(inv_df).mark_bar(color='#DAA520').encode(x='age', y='amount'))
+            st.download_button("Export (CSV)", inv_df.to_csv(), "ar_data.csv")
 
-    # --- SETTINGS ---
     elif page == "Settings":
-        st.info(f"🎁 Referral Network Status: {my_ref_count} Successes | Your Code: {my_ref_code}")
+        st.info(f"🎁 Referrals: {my_ref_count} | Code: {my_ref_code}")
         with st.form("setup"):
-            n_name = st.text_input("Firm Name", value=comp_name)
-            n_addr = st.text_area("Firm Address", value=comp_addr)
-            n_logo = st.file_uploader("Firm Logo (BLOB Persistent)", type=['png', 'jpg'])
-            if st.form_submit_button("Save Firm Profile"):
+            n_name = st.text_input("Name", value=comp_name)
+            n_addr = st.text_area("Address", value=comp_addr)
+            n_logo = st.file_uploader("Logo", type=['png', 'jpg'])
+            if st.form_submit_button("Save Profile"):
                 logo_blob = n_logo.read() if n_logo else user_logo
                 conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=? WHERE id=?", (n_name, n_addr, logo_blob, user_id))
                 conn.commit()
