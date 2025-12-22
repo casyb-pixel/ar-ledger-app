@@ -8,6 +8,7 @@ import stripe
 import os
 import tempfile
 import bcrypt  
+import altair as alt # Visualizations
 from fpdf import FPDF
 import streamlit_authenticator as stauth
 
@@ -17,35 +18,40 @@ st.set_page_config(page_title="AR Ledger SaaS", layout="wide")
 # Theme Colors: Navy (#2B588D) and Gold (#DAA520)
 st.markdown("""
     <style>
-    .stApp { background-color: #fcfcfc; }
+    .stApp { background-color: #f4f6f9; }
     
     /* Sidebar Styling */
     [data-testid="stSidebar"] { background-color: #2B588D; }
     [data-testid="stSidebar"] * { color: white !important; }
     
-    /* Metrics Styling */
+    /* Professional Card Styling for Metrics */
     div[data-testid="metric-container"] {
         background-color: white; 
-        padding: 15px; 
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-        border-left: 5px solid #DAA520; /* Gold Accent */
+        padding: 20px; 
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+        border-left: 6px solid #DAA520; /* Gold Accent */
+        text-align: center;
     }
     
+    /* Headers */
+    h1, h2, h3 { color: #2B588D; font-family: 'Helvetica', sans-serif; }
+    
+    /* Charts background */
+    .vega-embed { background: white; border-radius: 10px; padding: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+
     /* Button Styling */
     .stButton>button {
         background-color: #2B588D; 
         color: white; 
         border: 1px solid #DAA520;
+        border-radius: 5px;
     }
     .stButton>button:hover {
         background-color: #DAA520;
         color: white;
         border-color: #2B588D;
     }
-
-    /* Headers */
-    h1, h2, h3 { color: #2B588D; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -77,18 +83,19 @@ def init_db():
         stripe_customer_id TEXT, stripe_subscription_id TEXT,
         referral_code TEXT UNIQUE, referral_count INTEGER DEFAULT 0
     )''')
+    # PROJECTS: Added 'status'
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, client_name TEXT,
         quoted_price REAL, start_date TEXT, duration INTEGER,
         billing_address TEXT, site_address TEXT, 
         is_tax_exempt INTEGER DEFAULT 0, po_number TEXT,
+        status TEXT DEFAULT 'Bidding',
         scope_of_work TEXT
     )''')
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER,
         number INTEGER, amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
     )''')
-    # Added 'notes' column for payment details
     c.execute('''CREATE TABLE IF NOT EXISTS payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER,
         amount REAL, date TEXT, notes TEXT
@@ -101,17 +108,15 @@ init_db()
 def hash_password(password):
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-# CUSTOM PDF CLASS (Fixes Watermark Issue)
 class InvoicePDF(FPDF):
     def footer(self):
-        # Position at 1.5 cm from bottom
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
         self.set_text_color(180, 180, 180)
         self.cell(0, 10, BB_WATERMARK, 0, 0, 'C')
 
 def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms):
-    pdf = InvoicePDF() # Use our custom class
+    pdf = InvoicePDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
     
@@ -267,51 +272,183 @@ else:
         st.stop()
 
     u_data = conn.execute("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=?", (user_id,)).fetchone()
+    
+    if u_data is None:
+        st.warning("Session expired. Please log in again.")
+        authenticator.logout()
+        st.session_state.clear()
+        st.rerun()
+        st.stop()
+        
     logo, c_name, c_addr, terms = u_data
     
     page = st.sidebar.radio("Navigate", ["Dashboard", "Projects", "Invoices", "Payments", "Settings"])
     
     if page == "Dashboard":
-        st.title("Executive Dashboard")
-        if logo: st.image(logo, width=150)
+        col_t, col_l = st.columns([4, 1])
+        with col_t:
+            st.title("Executive Dashboard")
+            st.caption(f"Financial Overview for {c_name or 'My Firm'}")
+        with col_l:
+            if logo: st.image(logo, width=150)
         
-        t_inv = conn.execute("SELECT SUM(amount) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
-        t_rec = conn.execute("SELECT SUM(amount) FROM payments WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
+        st.markdown("---")
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Invoiced", f"${t_inv:,.2f}")
-        c2.metric("Collected", f"${t_rec:,.2f}")
-        c3.metric("Outstanding", f"${t_inv - t_rec:,.2f}")
+        # --- 1. FIRM WIDE SUMMARY ---
+        st.subheader("🏢 Firm-Wide Performance")
+        
+        t_contracts = conn.execute("SELECT SUM(quoted_price) FROM projects WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
+        t_invoiced = conn.execute("SELECT SUM(amount) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
+        t_collected = conn.execute("SELECT SUM(amount) FROM payments WHERE user_id=?", (user_id,)).fetchone()[0] or 0.0
+        remaining_to_invoice = t_contracts - t_invoiced
+        
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Contracts", f"${t_contracts:,.2f}", help="Sum of all active project quotes")
+        m2.metric("Total Invoiced", f"${t_invoiced:,.2f}", help="Total value of invoices sent")
+        m3.metric("Total Collected", f"${t_collected:,.2f}", help="Total payments received")
+        m4.metric("Remaining to Invoice", f"${remaining_to_invoice:,.2f}", help="Contract value not yet invoiced")
+        
+        # Charts
+        st.markdown("<br>", unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.markdown("##### Revenue Breakdown")
+            chart_data = pd.DataFrame({
+                'Category': ['Invoiced', 'Collected', 'Outstanding AR'],
+                'Amount': [t_invoiced, t_collected, t_invoiced - t_collected]
+            })
+            c = alt.Chart(chart_data).mark_bar().encode(
+                x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))
+            ).properties(height=300)
+            st.altair_chart(c, use_container_width=True)
+            
+        with c2:
+            st.markdown("##### Contract Progress")
+            pie_data = pd.DataFrame({
+                'Status': ['Invoiced', 'Remaining'],
+                'Value': [t_invoiced, remaining_to_invoice]
+            })
+            base = alt.Chart(pie_data).encode(theta=alt.Theta("Value", stack=True))
+            pie = base.mark_arc(innerRadius=50).encode(
+                color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])),
+                tooltip=["Status", "Value"]
+            ).properties(height=300)
+            st.altair_chart(pie, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- 2. PROJECT SPECIFIC ANALYSIS ---
+        st.subheader("🔍 Project Deep-Dive")
+        
+        projs = pd.read_sql_query("SELECT id, name FROM projects WHERE user_id=?", conn, params=(user_id,))
+        
+        if not projs.empty:
+            p_choice = st.selectbox("Select Project to Analyze", projs['name'])
+            p_id = projs[projs['name'] == p_choice]['id'].values[0]
+            
+            # Fetch Project Specifics (Including Timeline Data)
+            p_row = conn.execute("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=?", (int(p_id),)).fetchone()
+            p_quoted = p_row[0] if p_row else 0.0
+            p_start = p_row[1]
+            p_duration = p_row[2]
+            p_status = p_row[3]
+            
+            p_inv = conn.execute("SELECT SUM(amount) FROM invoices WHERE project_id=?", (int(p_id),)).fetchone()[0] or 0.0
+            p_col = conn.execute("SELECT SUM(amount) FROM payments WHERE project_id=?", (int(p_id),)).fetchone()[0] or 0.0
+            p_rem = p_quoted - p_inv
+            
+            st.caption(f"Status: **{p_status}**")
+            
+            pm1, pm2, pm3, pm4 = st.columns(4)
+            pm1.metric(f"Contract: {p_choice}", f"${p_quoted:,.2f}")
+            pm2.metric("Invoiced", f"${p_inv:,.2f}")
+            pm3.metric("Collected", f"${p_col:,.2f}")
+            pm4.metric("Remaining", f"${p_rem:,.2f}")
+            
+            # --- TIMELINE VISUALIZATION ---
+            st.markdown("##### Project Timeline")
+            try:
+                start_dt = datetime.datetime.strptime(p_start, '%Y-%m-%d').date()
+                end_dt = start_dt + datetime.timedelta(days=p_duration)
+                
+                # Creates a simple Gantt style bar
+                timeline_df = pd.DataFrame([
+                    {'Task': 'Project Duration', 'Start': str(start_dt), 'End': str(end_dt), 'Project': p_choice}
+                ])
+                
+                timeline_chart = alt.Chart(timeline_df).mark_bar(size=20, color='#2B588D').encode(
+                    x='Start:T',
+                    x2='End:T',
+                    y=alt.Y('Project', axis=None), # Hide Y axis label for cleaner look
+                    tooltip=['Task', 'Start', 'End']
+                ).properties(height=100)
+                
+                st.altair_chart(timeline_chart, use_container_width=True)
+                st.caption(f"Start: {start_dt} | Est. End: {end_dt} ({p_duration} Days)")
+            except:
+                st.info("Timeline unavailable (Invalid Dates)")
+
+        else:
+            st.info("No projects found. Go to 'Projects' to add one.")
 
     elif page == "Projects":
-        st.subheader("Projects")
-        with st.form("new_proj"):
-            c1, c2 = st.columns(2)
-            n = c1.text_input("Project Name")
-            c = c2.text_input("Client Name")
-            q = c1.number_input("Quoted Price ($)", min_value=0.0)
-            dur = c2.number_input("Duration (Days)", min_value=1)
-            
-            s_addr = c1.text_input("Site Address")
-            b_addr = c2.text_input("Billing Address")
-            
-            start_d = c1.date_input("Start Date")
-            po = c2.text_input("PO Number (Optional)")
-            
-            is_tax_exempt = st.checkbox("Client is Tax Exempt?")
-            scope = st.text_area("Scope of Work")
-            
-            # Using form_submit_button strictly
-            if st.form_submit_button("Create Project"):
-                conn.execute("""INSERT INTO projects 
-                             (user_id, name, client_name, quoted_price, start_date, duration, 
-                              billing_address, site_address, is_tax_exempt, po_number, scope_of_work) 
-                             VALUES (?,?,?,?,?,?,?,?,?,?,?)""", 
-                             (user_id, n, c, q, str(start_d), dur, b_addr, s_addr, 1 if is_tax_exempt else 0, po, scope))
-                conn.commit()
-                st.success("Project Saved"); st.rerun()
+        st.subheader("Manage Projects")
+        
+        # CREATE PROJECT
+        with st.expander("Create New Project", expanded=True):
+            with st.form("new_proj"):
+                c1, c2 = st.columns(2)
+                n = c1.text_input("Project Name")
+                c = c2.text_input("Client Name")
+                q = c1.number_input("Quoted Price ($)", min_value=0.0)
+                dur = c2.number_input("Duration (Days)", min_value=1)
                 
-        st.dataframe(pd.read_sql_query("SELECT name, client_name, quoted_price, start_date, po_number FROM projects WHERE user_id=?", conn, params=(user_id,)))
+                s_addr = c1.text_input("Site Address")
+                b_addr = c2.text_input("Billing Address")
+                
+                start_d = c1.date_input("Start Date")
+                po = c2.text_input("PO Number (Optional)")
+                
+                # New Dropdown Status
+                status = c1.selectbox("Project Status", 
+                                    ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"])
+                
+                is_tax_exempt = c2.checkbox("Client is Tax Exempt?")
+                scope = st.text_area("Scope of Work")
+                
+                if st.form_submit_button("Create Project"):
+                    conn.execute("""INSERT INTO projects 
+                                 (user_id, name, client_name, quoted_price, start_date, duration, 
+                                  billing_address, site_address, is_tax_exempt, po_number, status, scope_of_work) 
+                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", 
+                                 (user_id, n, c, q, str(start_d), dur, b_addr, s_addr, 1 if is_tax_exempt else 0, po, status, scope))
+                    conn.commit()
+                    st.success("Project Saved"); st.rerun()
+
+        # DELETE / MANAGE PROJECTS
+        st.markdown("### Existing Projects")
+        projs = pd.read_sql_query("SELECT id, name, client_name, status, quoted_price FROM projects WHERE user_id=?", conn, params=(user_id,))
+        
+        if not projs.empty:
+            st.dataframe(projs, use_container_width=True)
+            
+            st.markdown("#### Remove Project")
+            c_del_1, c_del_2 = st.columns([3, 1])
+            p_to_del = c_del_1.selectbox("Select Project to Delete", projs['name'], key="del_select")
+            
+            if c_del_2.button("Delete Selected Project", type="primary"):
+                # Get ID
+                pid_del = projs[projs['name'] == p_to_del]['id'].values[0]
+                # Delete Project and related Invoices/Payments
+                conn.execute("DELETE FROM projects WHERE id=?", (int(pid_del),))
+                conn.execute("DELETE FROM invoices WHERE project_id=?", (int(pid_del),))
+                conn.execute("DELETE FROM payments WHERE project_id=?", (int(pid_del),))
+                conn.commit()
+                st.warning(f"Deleted {p_to_del}")
+                st.rerun()
+        else:
+            st.info("No active projects.")
 
     elif page == "Invoices":
         st.subheader("Invoicing")
@@ -342,8 +479,7 @@ else:
                     conn.commit()
             
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
-    
-    # --- NEW PAYMENTS TAB ---
+
     elif page == "Payments":
         st.subheader("Receive Payment")
         projs = pd.read_sql_query("SELECT * FROM projects WHERE user_id=?", conn, params=(user_id,))
@@ -355,7 +491,6 @@ else:
             with st.form("pay_form"):
                 amt = st.number_input("Payment Amount ($)", min_value=0.01)
                 pay_date = st.date_input("Date Received")
-                # Notes field for Invoice # or Check #
                 notes = st.text_input("Notes (Invoice #, Check #, etc.)")
                 
                 if st.form_submit_button("Log Payment"):
@@ -365,7 +500,6 @@ else:
                     st.success("Payment Logged Successfully")
                     st.rerun()
             
-            # Show Payment History
             st.markdown("### Payment History")
             pay_hist = pd.read_sql_query("SELECT date, amount, notes FROM payments WHERE project_id=?", conn, params=(int(row['id']),))
             st.dataframe(pay_hist)
@@ -386,4 +520,3 @@ else:
                 conn.commit(); st.success("Settings Saved"); st.rerun()
     
     if st.sidebar.button("Logout"): authenticator.logout(); st.rerun()
-    
