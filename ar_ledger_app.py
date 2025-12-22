@@ -237,12 +237,12 @@ else:
         st.rerun()
 
     if st.session_state.sub_status != 'Active':
-        st.info("💎 Welcome. Activate your trial to begin.")
+                st.info("💎 Welcome. Activate your trial to begin.")
         url, _ = create_checkout_session(stripe_cid)
         st.link_button("🚀 Start 30-Day Free Trial", url)
         
         # Manual check button as fallback
-        if st.button("🔄 Refresh Status"):
+        if st.button("Refresh Status"):
             try:
                 subs = stripe.Subscription.list(customer=stripe_cid, status='all', limit=1)
                 if subs.data and subs.data[0].status in ['active', 'trialing']:
