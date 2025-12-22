@@ -261,7 +261,9 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
             
             st.markdown("---")
             st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
-            terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.")
+            
+            # FIXED: Checkbox defaults to False (Unchecked)
+            terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.", value=False)
             
             if st.form_submit_button("Create Account"):
                 if not terms_agreed:
@@ -280,7 +282,12 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
                                      (u, h_p, e, cid, my_ref))
                         conn.commit()
                         st.success("Account Created! Please switch to Login tab.")
-                    except Exception as err: st.error(f"Error: {err}")
+                    
+                    # FIXED: Specific Error Handling for Duplicate Usernames
+                    except sqlite3.IntegrityError:
+                        st.error("Username already taken. Please choose another.")
+                    except Exception as err: 
+                        st.error(f"Error: {err}")
                 else:
                     st.warning("Please fill all fields")
 else:
