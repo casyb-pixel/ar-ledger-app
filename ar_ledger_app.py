@@ -442,11 +442,22 @@ else:
         
         st.markdown("### Edit Profile")
         with st.form("set"):
-            cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Logo")
+            cn = st.text_input("Company Name", value=c_name or "")
+            ca = st.text_area("Address", value=c_addr or "")
+            t_cond = st.text_area("Terms", value=terms or "")
+            l = st.file_uploader("Logo")
+            
             if st.form_submit_button("Save"):
-                lb = l.read() if l else logo
-                conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=?, terms_conditions=? WHERE id=?", (cn, ca, lb, t_cond, user_id)); conn.commit(); st.success("Saved"); st.rerun()
-
-    if st.sidebar.button("Logout"):
-        st.session_state.clear()
-        st.rerun()
+                # --- ANTI-CHEAT LOGIC ---
+                # Check if this company name exists for a DIFFERENT user ID
+                existing_company = conn.execute("SELECT id FROM users WHERE company_name=? AND id!=?", (cn, user_id)).fetchone()
+                
+                if existing_company and cn.strip() != "":
+                    st.error("⚠️ This Company Name is already registered to another account. Please contact support if this is an error.")
+                else:
+                    lb = l.read() if l else logo
+                    conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=?, terms_conditions=? WHERE id=?", (cn, ca, lb, t_cond, user_id))
+                    conn.commit()
+                    st.success("Settings Saved")
+                    # Force reload to update branding immediately
+                    st.rerun()
