@@ -209,7 +209,11 @@ def generate_pdf_invoice(invoice_data, user_logo_data, company_info, terms, them
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 10, f"Date: {invoice_data['date']}", ln=1)
     if invoice_data.get('billing_address'):
-        pdf.multi_cell(0, 8, f"Bill To:\n{invoice_data['billing_address']}")
+        pdf.ln(5)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 10, "Bill To:", ln=1)
+        pdf.set_font("Arial", size=12)
+        pdf.multi_cell(0, 8, invoice_data['billing_address'])
         pdf.ln(10)
     pdf.cell(0, 10, f"Amount: ${invoice_data['amount']:,.2f}", ln=1)
     pdf.cell(0, 10, f"Tax: ${invoice_data['tax']:,.2f}", ln=1)
@@ -495,9 +499,9 @@ if st.session_state.authenticated and st.session_state.user_id:
     with st.sidebar:
         display_name = st.session_state.get('name', 'User')
         st.header(f"Hello, {display_name}")
-        page = st.radio("Navigate", ["Dashboard", "Projects", "Contacts", "Invoices", "Payments", "Reports", "Settings", "Help"])
+        page = st.radio("Navigate", ["Dashboard", "Projects", "Contacts", "Invoices", "Payments", "Reports", "Settings", "Help"], key='nav_radio')
         st.divider()
-        if st.button("Logout"):
+        if st.button("Logout", key='logout_sidebar_button'):
             authenticator.logout('Logout', 'main')
             st.session_state.authenticated = False
             st.rerun()
@@ -687,7 +691,7 @@ if st.session_state.authenticated and st.session_state.user_id:
             project_row = projects[projects['name'] == project_choice].iloc[0]
             project_id = int(project_row['id'])
             quoted = project_row['quoted_price']
-            billing_address = project_row.get('billing_address', '')  # Pull project billing address
+            billing_address = project_row.get('billing_address', '')
            
             current_invoices = get_user_data(user_id, "invoices", f"AND project_id = {project_id}")
             total_invoiced_so_far = current_invoices['amount'].sum() if not current_invoices.empty else 0.0
@@ -867,7 +871,7 @@ if st.session_state.authenticated and st.session_state.user_id:
         """)
 
     # --- LOGOUT ---
-    if st.sidebar.button("Logout"):
+    if st.sidebar.button("Logout", key='logout_sidebar_button'):
         authenticator.logout('Logout', 'main')
         st.session_state.authenticated = False
         st.rerun()
@@ -875,9 +879,3 @@ if st.session_state.authenticated and st.session_state.user_id:
 # --- FOOTER ---
 st.markdown("---")
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
-
-
-
-
-
-
