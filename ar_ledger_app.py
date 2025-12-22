@@ -83,15 +83,20 @@ def init_db():
         stripe_customer_id TEXT, stripe_subscription_id TEXT,
         referral_code TEXT UNIQUE, referral_count INTEGER DEFAULT 0
     )''')
-    # PROJECTS: Added 'status'
+    
+    # PROJECTS: Updated Schema for Split Addresses
     c.execute('''CREATE TABLE IF NOT EXISTS projects (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, client_name TEXT,
         quoted_price REAL, start_date TEXT, duration INTEGER,
-        billing_address TEXT, site_address TEXT, 
+        
+        billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
+        site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
+        
         is_tax_exempt INTEGER DEFAULT 0, po_number TEXT,
         status TEXT DEFAULT 'Bidding',
         scope_of_work TEXT
     )''')
+    
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, project_id INTEGER,
         number INTEGER, amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
@@ -120,6 +125,7 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
     
+    # --- LOGO (Top Left) ---
     if logo_data:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -127,30 +133,48 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
 
+    # --- COMPANY INFO (Top Right) ---
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
     
-    pdf.ln(15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
-    pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1)
-    
+    # --- INVOICE TITLE & DATE (Below Company Info) ---
+    pdf.set_xy(120, 35)
+    pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
+    pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0)
-    pdf.cell(100, 5, f"PROJECT: {project_info['name']}", ln=0)
     pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
-    
-    pdf.ln(5); pdf.set_font("Arial", size=10)
-    pdf.cell(100, 5, f"Client: {project_info['client_name']}", ln=1)
     if project_info.get('po_number'):
         pdf.cell(0, 5, f"PO #: {project_info['po_number']}", ln=1, align='R')
-    
-    pdf.ln(5)
-    pdf.multi_cell(0, 5, f"Billing Addr: {project_info.get('billing_address', '')}")
-    pdf.multi_cell(0, 5, f"Site Addr: {project_info.get('site_address', '')}")
 
-    pdf.ln(10); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
+    # --- CLIENT BILLING ADDRESS (The Envelope Window Position) ---
+    # Standard window position is approx 20mm from left, 50mm from top
+    pdf.set_xy(10, 55) 
+    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
+    pdf.set_font("Arial", size=10)
+    
+    # Construct Client Block
+    pdf.cell(0, 5, f"{project_info['client_name']}", ln=1)
+    if project_info.get('billing_street'):
+        pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1)
+        pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
+    
+    # --- SITE ADDRESS (Right Side / Non-Window) ---
+    pdf.set_xy(110, 55)
+    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:", ln=1)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 5, f"{project_info['name']}", ln=1)
+    if project_info.get('site_street'):
+        pdf.cell(0, 5, f"{project_info['site_street']}", ln=1)
+        pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}", ln=1)
+
+    # --- DESCRIPTION ---
+    pdf.set_xy(10, 90) # Move down past address blocks
+    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
     
+    # --- TOTALS ---
     pdf.ln(10)
     pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R')
     pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R')
@@ -347,7 +371,6 @@ else:
             p_choice = st.selectbox("Select Project to Analyze", projs['name'])
             p_id = projs[projs['name'] == p_choice]['id'].values[0]
             
-            # Fetch Project Specifics (Including Timeline Data)
             p_row = conn.execute("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=?", (int(p_id),)).fetchone()
             p_quoted = p_row[0] if p_row else 0.0
             p_start = p_row[1]
@@ -366,13 +389,11 @@ else:
             pm3.metric("Collected", f"${p_col:,.2f}")
             pm4.metric("Remaining", f"${p_rem:,.2f}")
             
-            # --- TIMELINE VISUALIZATION ---
             st.markdown("##### Project Timeline")
             try:
                 start_dt = datetime.datetime.strptime(p_start, '%Y-%m-%d').date()
                 end_dt = start_dt + datetime.timedelta(days=p_duration)
                 
-                # Creates a simple Gantt style bar
                 timeline_df = pd.DataFrame([
                     {'Task': 'Project Duration', 'Start': str(start_dt), 'End': str(end_dt), 'Project': p_choice}
                 ])
@@ -380,7 +401,7 @@ else:
                 timeline_chart = alt.Chart(timeline_df).mark_bar(size=20, color='#2B588D').encode(
                     x='Start:T',
                     x2='End:T',
-                    y=alt.Y('Project', axis=None), # Hide Y axis label for cleaner look
+                    y=alt.Y('Project', axis=None), 
                     tooltip=['Task', 'Start', 'End']
                 ).properties(height=100)
                 
@@ -404,25 +425,41 @@ else:
                 q = c1.number_input("Quoted Price ($)", min_value=0.0)
                 dur = c2.number_input("Duration (Days)", min_value=1)
                 
-                s_addr = c1.text_input("Site Address")
-                b_addr = c2.text_input("Billing Address")
+                st.markdown("##### Addresses")
+                ac1, ac2 = st.columns(2)
                 
+                with ac1:
+                    st.markdown("**Billing Address**")
+                    b_street = st.text_input("Billing Street")
+                    b_city = st.text_input("Billing City")
+                    b_state = st.text_input("Billing State", max_chars=2)
+                    b_zip = st.text_input("Billing Zip")
+                
+                with ac2:
+                    st.markdown("**Site Address**")
+                    s_street = st.text_input("Site Street")
+                    s_city = st.text_input("Site City")
+                    s_state = st.text_input("Site State", max_chars=2)
+                    s_zip = st.text_input("Site Zip")
+                
+                st.markdown("##### Details")
                 start_d = c1.date_input("Start Date")
                 po = c2.text_input("PO Number (Optional)")
-                
-                # New Dropdown Status
-                status = c1.selectbox("Project Status", 
-                                    ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"])
-                
+                status = c1.selectbox("Project Status", ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"])
                 is_tax_exempt = c2.checkbox("Client is Tax Exempt?")
                 scope = st.text_area("Scope of Work")
                 
                 if st.form_submit_button("Create Project"):
                     conn.execute("""INSERT INTO projects 
                                  (user_id, name, client_name, quoted_price, start_date, duration, 
-                                  billing_address, site_address, is_tax_exempt, po_number, status, scope_of_work) 
-                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", 
-                                 (user_id, n, c, q, str(start_d), dur, b_addr, s_addr, 1 if is_tax_exempt else 0, po, status, scope))
+                                  billing_street, billing_city, billing_state, billing_zip,
+                                  site_street, site_city, site_state, site_zip,
+                                  is_tax_exempt, po_number, status, scope_of_work) 
+                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", 
+                                 (user_id, n, c, q, str(start_d), dur, 
+                                  b_street, b_city, b_state, b_zip, 
+                                  s_street, s_city, s_state, s_zip,
+                                  1 if is_tax_exempt else 0, po, status, scope))
                     conn.commit()
                     st.success("Project Saved"); st.rerun()
 
@@ -438,9 +475,7 @@ else:
             p_to_del = c_del_1.selectbox("Select Project to Delete", projs['name'], key="del_select")
             
             if c_del_2.button("Delete Selected Project", type="primary"):
-                # Get ID
                 pid_del = projs[projs['name'] == p_to_del]['id'].values[0]
-                # Delete Project and related Invoices/Payments
                 conn.execute("DELETE FROM projects WHERE id=?", (int(pid_del),))
                 conn.execute("DELETE FROM invoices WHERE project_id=?", (int(pid_del),))
                 conn.execute("DELETE FROM payments WHERE project_id=?", (int(pid_del),))
@@ -467,10 +502,21 @@ else:
                 
                 if st.form_submit_button("Generate"):
                     num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
+                    
+                    # Convert DB rows to Dict for PDF
+                    p_info_dict = {
+                        'name': row['name'], 'client_name': row['client_name'],
+                        'billing_street': row['billing_street'], 'billing_city': row['billing_city'],
+                        'billing_state': row['billing_state'], 'billing_zip': row['billing_zip'],
+                        'site_street': row['site_street'], 'site_city': row['site_city'],
+                        'site_state': row['site_state'], 'site_zip': row['site_zip'],
+                        'po_number': row['po_number']
+                    }
+                    
                     pdf = generate_pdf_invoice(
                         {'number': num, 'amount': a+t, 'tax': t, 'date': str(datetime.date.today()), 'description': d}, 
                         logo, {'name': c_name, 'address': c_addr}, 
-                        {'name': row['name'], 'client_name': row['client_name'], 'billing_address': row['billing_address'], 'site_address': row['site_address'], 'po_number': row['po_number']}, 
+                        p_info_dict, 
                         terms
                     )
                     st.session_state.pdf = pdf
