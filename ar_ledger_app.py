@@ -7,13 +7,14 @@ import string
 import stripe 
 import os
 import tempfile
+import bcrypt  # standard hashing library
 from fpdf import FPDF
 import streamlit_authenticator as stauth
-from streamlit_authenticator.utilities.hasher import Hasher
 
-# --- 1. CONFIGURATION & SETUP ---
+# --- 1. CONFIGURATION & STYLING (ALWAYS RUNS FIRST) ---
 st.set_page_config(page_title="AR Ledger SaaS", layout="wide")
 
+# Force the CSS to run immediately
 st.markdown("""
     <style>
     .stApp { background-color: #f8f9fa; }
@@ -71,7 +72,8 @@ init_db()
 
 # --- 3. HELPER FUNCTIONS ---
 def hash_password(password):
-    return Hasher([password]).generate()[0]
+    # FIXED: Uses standard bcrypt to avoid library version errors
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms):
     pdf = FPDF()
@@ -129,17 +131,18 @@ def load_credentials():
     c = conn.cursor()
     c.execute("SELECT username, password, email FROM users")
     users = c.fetchall()
-    # Handle empty database gracefully
     if not users: return {'usernames': {}}
     return {'usernames': {u[0]: {'name': u[0], 'password': u[1], 'email': u[2]} for u in users}}
 
 credentials = load_credentials()
-# Decreased cookie expiry to 1 day to fix stale sessions
 authenticator = stauth.Authenticate(credentials, 'ar_ledger_cookie_v2', 'bb_key_new', 1)
 
 # --- 5. LOGIC FLOW ---
 
-# We rely ONLY on the authenticator's status now.
+# Ensure session state is initialized
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"] = None
+
 if st.session_state["authentication_status"] is False or st.session_state["authentication_status"] is None:
     # --- LOGIN / SIGNUP SCREEN ---
     st.title("Client AR Portal")
@@ -148,7 +151,6 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
     with tab1:
         authenticator.login(location='main')
         if st.session_state["authentication_status"]:
-            # Sync user ID on successful login
             u = st.session_state["username"]
             rec = conn.execute("SELECT id, subscription_status, stripe_customer_id FROM users WHERE username=?", (u,)).fetchone()
             if rec:
@@ -180,14 +182,16 @@ if st.session_state["authentication_status"] is False or st.session_state["authe
 else:
     # --- MAIN APP (AUTHENTICATED) ---
     if 'user_id' not in st.session_state:
-        # Recover user_id if lost during refresh
         u = st.session_state["username"]
         rec = conn.execute("SELECT id, subscription_status, stripe_customer_id FROM users WHERE username=?", (u,)).fetchone()
-        st.session_state.user_id = rec[0]; st.session_state.sub_status = rec[1]; st.session_state.stripe_cid = rec[2]
+        if rec:
+            st.session_state.user_id = rec[0]; st.session_state.sub_status = rec[1]; st.session_state.stripe_cid = rec[2]
+        else:
+            authenticator.logout()
+            st.rerun()
     
     user_id = st.session_state.user_id
     
-    # Subscription Gate
     if st.session_state.sub_status != 'Active' and st.session_state.stripe_cid:
         st.warning("⚠️ Trial Inactive")
         url, err = create_checkout_session(st.session_state.stripe_cid)
@@ -198,7 +202,6 @@ else:
         if st.sidebar.button("Logout"): authenticator.logout(); st.rerun()
         st.stop()
 
-    # Dashboard Logic
     u_data = conn.execute("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=?", (user_id,)).fetchone()
     logo, c_name, c_addr, terms = u_data
     
@@ -246,3 +249,4 @@ else:
                 conn.commit(); st.success("Saved"); st.rerun()
     
     if st.sidebar.button("Logout"): authenticator.logout(); st.rerun()
+    
