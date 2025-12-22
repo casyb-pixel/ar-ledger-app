@@ -34,12 +34,12 @@ elif "STRIPE_SECRET_KEY" in st.secrets:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
     STRIPE_PUBLISHABLE_KEY = st.secrets["STRIPE_PUBLISHABLE_KEY"]
     os.environ['STRIPE_SECRET_KEY'] = stripe.api_key
-    st.warning("App is running in **TEST MODE** (No real transactions).")
+    
 else:
     # Fallback for local console testing if secrets.toml is missing
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_51...fallback")
     STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_51...fallback")
-    st.warning("App is running in **FALLBACK TEST MODE**.")
+    
 
 
 STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
@@ -890,6 +890,7 @@ if st.session_state.authenticated and st.session_state.user_id:
 # --- FOOTER ---
 st.markdown("---")
 st.markdown(f"<div style='text-align: center; color: grey;'>{BB_WATERMARK}</div>", unsafe_allow_html=True)
+
 
 
 
