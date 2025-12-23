@@ -68,7 +68,6 @@ def get_engine():
 engine = get_engine()
 
 def run_query(query, params=None):
-    """Read Data safely."""
     try:
         with engine.connect() as conn:
             return pd.read_sql(text(query), conn, params=params)
@@ -76,7 +75,6 @@ def run_query(query, params=None):
         return pd.DataFrame() 
 
 def execute_statement(query, params=None):
-    """Write Data safely using 'begin' for auto-commit."""
     try:
         with engine.begin() as conn: 
             conn.execute(text(query), params)
@@ -129,7 +127,8 @@ def get_referral_stats(my_code):
         return active_count, discount_percent
     return 0, 0
 
-class InvoicePDF(FPDF):
+# --- PDF GENERATOR CLASS ---
+class BB_PDF(FPDF):
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
@@ -137,10 +136,9 @@ class InvoicePDF(FPDF):
         self.cell(0, 10, BB_WATERMARK, 0, 0, 'C')
 
 def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms):
-    pdf = InvoicePDF()
+    pdf = BB_PDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
-    
     if logo_data:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -149,52 +147,87 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
                 tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
-    
     pdf.set_xy(120, 35)
     pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
-    if project_info.get('po_number'):
-        pdf.cell(0, 5, f"PO #: {project_info['po_number']}", ln=1, align='R')
-
-    pdf.set_xy(10, 60) 
-    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
-    pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, f"{project_info['client_name']}", ln=1)
+    if project_info.get('po_number'): pdf.cell(0, 5, f"PO #: {project_info['po_number']}", ln=1, align='R')
+    pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
+    pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['client_name']}", ln=1)
     if project_info.get('billing_street'):
         pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1)
         pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
-    
-    right_x = 110; current_y = 60 
-    pdf.set_xy(right_x, current_y)
-    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:")
-    current_y += 5
-    pdf.set_xy(right_x, current_y)
+    right_x = 110; current_y = 60; pdf.set_xy(right_x, current_y)
+    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:"); current_y += 5; pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['name']}")
     if project_info.get('site_street'):
         current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{project_info['site_street']}")
         current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}")
-
-    pdf.set_xy(10, 95) 
-    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
+    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
-    
     pdf.ln(10)
     pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R')
     pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R')
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
-    
+    pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
     if terms: 
         pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1)
         pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, terms)
-    
+    return pdf.output(dest='S').encode('latin-1', 'replace')
+
+def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, client_name):
+    pdf = BB_PDF()
+    pdf.add_page()
+    if logo_data:
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                if isinstance(logo_data, memoryview): tmp.write(logo_data.tobytes())
+                else: tmp.write(logo_data)
+                tmp_path = tmp.name
+            pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
+        except: pass
+    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
+    pdf.cell(0, 10, "STATEMENT OF ACCOUNT", ln=1, align='R')
+    pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R')
+    pdf.ln(10)
+    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {project_name}", ln=1)
+    pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {client_name}", ln=1)
+    pdf.ln(10)
+    # Table Header
+    pdf.set_fill_color(240, 240, 240); pdf.set_font("Arial", "B", 10)
+    pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1)
+    pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1)
+    pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
+    # Rows
+    pdf.set_font("Arial", size=9)
+    for index, row in ledger_df.iterrows():
+        pdf.cell(30, 8, str(row['Date']), 1)
+        pdf.cell(80, 8, str(row['Details'])[:40], 1)
+        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R')
+        pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R')
+        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R')
+    return pdf.output(dest='S').encode('latin-1', 'replace')
+
+def generate_dashboard_pdf(metrics, company_name):
+    pdf = BB_PDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
+    pdf.cell(0, 10, f"FINANCIAL DASHBOARD REPORT", ln=1, align='C')
+    pdf.set_font("Arial", size=12); pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 10, f"Company: {company_name}", ln=1, align='C')
+    pdf.cell(0, 10, f"Date: {datetime.date.today()}", ln=1, align='C')
+    pdf.ln(20)
+    pdf.set_font("Arial", size=12)
+    pdf.cell(100, 10, "Metric", 1); pdf.cell(50, 10, "Value", 1, 1)
+    pdf.set_font("Arial", "B", 12)
+    for key, value in metrics.items():
+        pdf.cell(100, 10, key, 1)
+        pdf.cell(50, 10, value, 1, 1, 'R')
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def create_checkout_session(customer_id, discount_percent):
@@ -228,7 +261,6 @@ if st.session_state.user_id is None:
             u = st.text_input("Username"); p = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Login")
             if submitted:
-                # Direct SQL for login safe check
                 df = run_query("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
                 if not df.empty:
                     rec = df.iloc[0]
@@ -262,7 +294,6 @@ if st.session_state.user_id is None:
                             today_str = str(datetime.date.today())
                             if ref_input:
                                 execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
-                            
                             execute_statement("""
                                 INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) 
                                 VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)
@@ -304,7 +335,6 @@ else:
             if st.button("Logout"): st.session_state.clear(); st.rerun()
             st.stop()
 
-    # Load Full User Data (Logo)
     df_full = run_query("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
     u_data = df_full.iloc[0]
     logo, c_name, c_addr, terms = u_data['logo_data'], u_data['company_name'], u_data['company_address'], u_data['terms_conditions']
@@ -333,17 +363,33 @@ else:
         t_invoiced = get_scalar("SELECT SUM(amount) FROM invoices WHERE user_id=:id", {"id": user_id})
         t_collected = get_scalar("SELECT SUM(amount) FROM payments WHERE user_id=:id", {"id": user_id})
         remaining_to_invoice = t_contracts - t_invoiced
+        outstanding_ar = t_invoiced - t_collected
         
-        m1, m2, m3, m4 = st.columns(4)
+        m1, m2, m3 = st.columns(3)
         m1.metric("Total Contracts", f"${t_contracts:,.2f}")
         m2.metric("Total Invoiced", f"${t_invoiced:,.2f}")
         m3.metric("Total Collected", f"${t_collected:,.2f}")
-        m4.metric("Remaining to Invoice", f"${remaining_to_invoice:,.2f}")
         
-        st.markdown("<br>", unsafe_allow_html=True); c1, c2 = st.columns(2)
+        m4, m5 = st.columns(2)
+        m4.metric("Remaining to Invoice", f"${remaining_to_invoice:,.2f}")
+        m5.metric("Outstanding AR (Unpaid)", f"${outstanding_ar:,.2f}", delta_color="inverse")
+        
+        # Dashboard PDF Export
+        dash_metrics = {
+            "Total Contracts": f"${t_contracts:,.2f}",
+            "Total Invoiced": f"${t_invoiced:,.2f}",
+            "Total Collected": f"${t_collected:,.2f}",
+            "Remaining to Invoice": f"${remaining_to_invoice:,.2f}",
+            "Outstanding AR": f"${outstanding_ar:,.2f}"
+        }
+        pdf_bytes = generate_dashboard_pdf(dash_metrics, c_name or "My Firm")
+        st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, "dashboard_report.pdf", "application/pdf")
+        
+        st.markdown("---")
+        c1, c2 = st.columns(2)
         with c1:
             st.markdown("##### Revenue Breakdown")
-            chart_data = pd.DataFrame({'Category': ['Invoiced', 'Collected', 'Outstanding AR'], 'Amount': [t_invoiced, t_collected, t_invoiced - t_collected]})
+            chart_data = pd.DataFrame({'Category': ['Invoiced', 'Collected', 'Outstanding AR'], 'Amount': [t_invoiced, t_collected, outstanding_ar]})
             c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=300)
             st.altair_chart(c, use_container_width=True)
         with c2:
@@ -354,15 +400,15 @@ else:
             st.altair_chart(pie, use_container_width=True)
 
         st.markdown("---"); st.subheader("🔍 Project Deep-Dive")
-        projs = run_query("SELECT id, name FROM projects WHERE user_id=:id", {"id": user_id})
+        projs = run_query("SELECT id, name, client_name FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
             p_choice = st.selectbox("Select Project", projs['name'])
             p_id = int(projs[projs['name'] == p_choice]['id'].values[0])
+            client_name = projs[projs['name'] == p_choice]['client_name'].values[0]
             
             p_row = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
             p_quoted, p_status = p_row['quoted_price'] or 0.0, p_row['status']
             
-            # --- LEDGER & VISUALS LOGIC ---
             df_inv = run_query("SELECT issue_date, invoice_num, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
             df_pay = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
             
@@ -377,11 +423,9 @@ else:
             if not df_ledger.empty:
                 df_ledger['Date'] = pd.to_datetime(df_ledger['Date'])
                 df_ledger = df_ledger.sort_values(by='Date').reset_index(drop=True)
-                # Calculate Running Balance
                 df_ledger['Balance'] = (df_ledger['Charge'] - df_ledger['Payment']).cumsum()
                 df_ledger['Date'] = df_ledger['Date'].dt.date
                 
-                # Metrics for this project
                 tot_bill = df_ledger['Charge'].sum()
                 tot_paid = df_ledger['Payment'].sum()
                 curr_bal = tot_bill - tot_paid
@@ -391,22 +435,24 @@ else:
                 pc2.metric("Total Billed", f"${tot_bill:,.2f}")
                 pc3.metric("Current Balance", f"${curr_bal:,.2f}", delta_color="inverse")
                 
+                # Statement PDF
                 st.markdown("### Project Ledger")
+                c_pdf, c_tbl = st.columns([1, 4])
+                with c_pdf:
+                    pdf_bytes = generate_statement_pdf(df_ledger, logo, {"name": c_name, "address": c_addr}, p_choice, client_name)
+                    st.download_button("📄 Download Statement (PDF)", pdf_bytes, f"statement_{p_choice}.pdf", "application/pdf")
+                
                 st.dataframe(df_ledger[['Date', 'Details', 'Charge', 'Payment', 'Balance']].style.format("{:.2f}", subset=['Charge', 'Payment', 'Balance']), use_container_width=True)
                 
                 l1, l2 = st.columns(2)
                 with l1:
                     st.markdown("##### Account Balance History")
-                    line = alt.Chart(df_ledger).mark_line(point=True, color='#2B588D').encode(
-                        x='Date', y='Balance', tooltip=['Date', 'Balance', 'Details']
-                    ).properties(height=300)
+                    line = alt.Chart(df_ledger).mark_line(point=True, color='#2B588D').encode(x='Date', y='Balance', tooltip=['Date', 'Balance']).properties(height=300)
                     st.altair_chart(line, use_container_width=True)
                 with l2:
                     st.markdown("##### Billed vs Collected")
                     bar_df = pd.DataFrame({'Category': ['Billed', 'Collected'], 'Amount': [tot_bill, tot_paid]})
-                    bar = alt.Chart(bar_df).mark_bar().encode(
-                        x='Category', y='Amount', color='Category'
-                    ).properties(height=300)
+                    bar = alt.Chart(bar_df).mark_bar().encode(x='Category', y='Amount', color='Category').properties(height=300)
                     st.altair_chart(bar, use_container_width=True)
             else:
                 st.info("No transactions recorded yet for this project.")
