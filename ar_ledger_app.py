@@ -54,7 +54,6 @@ BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
 # --- 2. DATABASE ENGINE (POSTGRESQL) ---
-# Connect to Supabase via Streamlit Secrets
 conn = st.connection("supabase", type="sql")
 
 def run_query(query, params=None):
@@ -62,10 +61,16 @@ def run_query(query, params=None):
     return conn.query(query, params=params, ttl=0)
 
 def execute_statement(query, params=None):
-    """Helper for INSERT/UPDATE/DELETE"""
-    with conn.session as s:
-        s.execute(text(query), params)
-        s.commit()
+    """Helper for INSERT/UPDATE/DELETE with ROBUST ERROR HANDLING"""
+    try:
+        with conn.session as s:
+            s.execute(text(query), params)
+            s.commit()
+    except Exception as e:
+        # If DB error, ROLLBACK session so it's not stuck in 'Aborted' state
+        with conn.session as s:
+            s.rollback()
+        raise e
 
 def init_db():
     # PostgreSQL syntax: SERIAL for AutoIncrement, BYTEA for Blob
@@ -78,7 +83,7 @@ def init_db():
             logo_data BYTEA, 
             terms_conditions TEXT, 
             company_name TEXT, 
-            company_address TEXT,
+            company_address TEXT, 
             company_phone TEXT, 
             subscription_status TEXT DEFAULT 'Inactive', 
             created_at TEXT,
@@ -159,7 +164,6 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     if logo_data:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                # Handle both bytes and memoryview
                 if isinstance(logo_data, memoryview):
                     tmp.write(logo_data.tobytes())
                 else:
@@ -251,7 +255,6 @@ if st.session_state.user_id is None:
         with st.form("login_form"):
             u = st.text_input("Username"); p = st.text_input("Password", type="password")
             if st.form_submit_button("Login"):
-                # Use direct execution to fetch sensitive login data
                 with conn.session as s:
                     res = s.execute(text("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u"), {"u": u}).fetchone()
                     if res:
@@ -277,7 +280,6 @@ if st.session_state.user_id is None:
                 if not terms_agreed: st.error("You must agree to the Terms and Conditions.")
                 elif u and p and e:
                     try:
-                        # Check Username
                         check = run_query("SELECT id FROM users WHERE username=:u", params={"u": u})
                         if not check.empty:
                             st.error("Username already taken.")
@@ -286,7 +288,6 @@ if st.session_state.user_id is None:
                             my_ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                             today_str = str(datetime.date.today())
                             
-                            # Increment Referrer
                             if ref_input:
                                 execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
                             
@@ -302,11 +303,9 @@ if st.session_state.user_id is None:
 else:
     user_id = st.session_state.user_id
     
-    # --- LOAD USER STATUS (Use Direct Session to avoid caching issues) ---
     with conn.session as s:
         res = s.execute(text("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id"), {"id": user_id}).fetchone()
-        if not res:
-            st.session_state.clear(); st.rerun()
+        if not res: st.session_state.clear(); st.rerun()
         status, created_at_str, my_code = res[0], res[1], res[2]
     
     active_referrals, discount_percent = get_referral_stats(my_code)
@@ -337,13 +336,10 @@ else:
             if st.button("Logout"): st.session_state.clear(); st.rerun()
             st.stop()
 
-    # --- LOAD FULL USER DATA (Use Direct Session for Logo safety) ---
     with conn.session as s:
         res_full = s.execute(text("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id"), {"id": user_id}).fetchone()
         logo, c_name, c_addr, terms = res_full[0], res_full[1], res_full[2], res_full[3]
-        # Convert memoryview to bytes immediately
-        if isinstance(logo, memoryview):
-            logo = logo.tobytes()
+        if isinstance(logo, memoryview): logo = logo.tobytes()
 
     if trial_active:
         st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Active Referrals: {active_referrals} (Current Discount: {discount_percent}%)")
@@ -356,8 +352,7 @@ else:
             display_title = f"{c_name} AR Ledger" if c_name else "Balance & Build AR Ledger"
             st.title(display_title); st.caption(f"Financial Overview for {c_name or 'My Firm'}")
         with col_l:
-            if logo: 
-                st.image(logo, width=150)
+            if logo: st.image(logo, width=150)
         st.markdown("---")
         
         st.subheader("🏢 Firm-Wide Performance")
