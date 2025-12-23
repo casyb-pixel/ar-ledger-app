@@ -64,7 +64,6 @@ def run_query(query, params=None):
 def execute_statement(query, params=None):
     """
     Executes a write operation with automatic retry logic.
-    If the connection is 'stale' (Zombie), it resets and tries one more time.
     """
     try:
         with conn.session as s:
@@ -73,7 +72,7 @@ def execute_statement(query, params=None):
     except exc.OperationalError:
         # DB Connection died. Wait, reset, and retry once.
         time.sleep(1)
-        st.cache_resource.clear() # Clear bad connection cache
+        st.cache_resource.clear() 
         try:
             with conn.session as s:
                 s.execute(text(query), params)
@@ -88,33 +87,31 @@ def execute_statement(query, params=None):
         raise e
 
 def init_db():
-    # Initialize Tables safely
-    try:
-        with conn.session as s:
-            s.execute(text('''CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT,
-                logo_data BYTEA, terms_conditions TEXT, company_name TEXT, company_address TEXT, 
-                company_phone TEXT, subscription_status TEXT DEFAULT 'Inactive', created_at TEXT,
-                stripe_customer_id TEXT, stripe_subscription_id TEXT, referral_code TEXT UNIQUE, 
-                referral_count INTEGER DEFAULT 0, referred_by TEXT
-            )'''))
-            s.execute(text('''CREATE TABLE IF NOT EXISTS projects (
-                id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, client_name TEXT,
-                quoted_price REAL, start_date TEXT, duration INTEGER,
-                billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
-                site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
-                is_tax_exempt INTEGER DEFAULT 0, po_number TEXT, status TEXT DEFAULT 'Bidding', scope_of_work TEXT
-            )'''))
-            s.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
-                id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, number INTEGER, 
-                amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
-            )'''))
-            s.execute(text('''CREATE TABLE IF NOT EXISTS payments (
-                id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount REAL, 
-                date TEXT, notes TEXT
-            )'''))
-            s.commit()
-    except: pass 
+    # Initialize Tables safely. Removed try/except so we can see if creation fails.
+    with conn.session as s:
+        s.execute(text('''CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT,
+            logo_data BYTEA, terms_conditions TEXT, company_name TEXT, company_address TEXT, 
+            company_phone TEXT, subscription_status TEXT DEFAULT 'Inactive', created_at TEXT,
+            stripe_customer_id TEXT, stripe_subscription_id TEXT, referral_code TEXT UNIQUE, 
+            referral_count INTEGER DEFAULT 0, referred_by TEXT
+        )'''))
+        s.execute(text('''CREATE TABLE IF NOT EXISTS projects (
+            id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, client_name TEXT,
+            quoted_price REAL, start_date TEXT, duration INTEGER,
+            billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
+            site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
+            is_tax_exempt INTEGER DEFAULT 0, po_number TEXT, status TEXT DEFAULT 'Bidding', scope_of_work TEXT
+        )'''))
+        s.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
+            id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, number INTEGER, 
+            amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
+        )'''))
+        s.execute(text('''CREATE TABLE IF NOT EXISTS payments (
+            id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount REAL, 
+            date TEXT, notes TEXT
+        )'''))
+        s.commit()
 
 init_db()
 
@@ -262,8 +259,12 @@ if st.session_state.user_id is None:
                             today_str = str(datetime.date.today())
                             if ref_input:
                                 execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
-                            execute_statement("INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)", 
-                                              params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
+                            
+                            # Using quoted identifiers just in case
+                            execute_statement("""
+                                INSERT INTO users ("username", "password", "email", "stripe_customer_id", "referral_code", "created_at", "subscription_status", "referred_by") 
+                                VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)
+                            """, params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
                             st.success("Account Created! Please switch to Login tab.")
                     except Exception as err: st.error(f"Error: {err}")
                 else: st.warning("Please fill all fields")
@@ -356,7 +357,6 @@ else:
             p_quoted, p_status = p_row['quoted_price'] or 0.0, p_row['status']
             
             # --- LEDGER LOGIC ---
-            # Fetch Invoices & Payments to build a unified ledger
             df_inv = run_query("SELECT date, number, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
             df_pay = run_query("SELECT date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
             
@@ -374,7 +374,6 @@ else:
                 df_ledger['Balance'] = (df_ledger['Debit'] - df_ledger['Credit']).cumsum()
                 df_ledger['Date'] = df_ledger['Date'].dt.date
                 
-                # Metrics
                 total_inv = df_ledger['Debit'].sum()
                 total_pay = df_ledger['Credit'].sum()
                 current_bal = total_inv - total_pay
@@ -387,7 +386,6 @@ else:
                 st.markdown("### Project Ledger")
                 st.dataframe(df_ledger, use_container_width=True)
                 
-                # Visuals for Ledger
                 l1, l2 = st.columns(2)
                 with l1:
                     st.markdown("##### Financial Trajectory (Running Balance)")
@@ -420,7 +418,7 @@ else:
                 is_tax_exempt = c2.checkbox("Tax Exempt?"); scope = st.text_area("Scope")
                 if st.form_submit_button("Create Project"):
                     execute_statement("""
-                        INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) 
+                        INSERT INTO projects ("user_id", "name", "client_name", "quoted_price", "start_date", "duration", "billing_street", "billing_city", "billing_state", "billing_zip", "site_street", "site_city", "site_state", "site_zip", "is_tax_exempt", "po_number", "status", "scope_of_work") 
                         VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)
                     """, params={
                         "uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, 
@@ -475,8 +473,12 @@ else:
                         p_info = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
                         pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
                         st.session_state.pdf = pdf
-                        execute_statement("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)", 
-                                          {"uid": user_id, "pid": int(row['id']), "num": num, "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
+                        
+                        # --- FIX: Using Quoted Identifiers to prevent 'ProgrammingError' ---
+                        execute_statement("""
+                            INSERT INTO invoices ("user_id", "project_id", "number", "amount", "date", "description", "tax") 
+                            VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)
+                        """, {"uid": user_id, "pid": int(row['id']), "num": num, "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
                         st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
@@ -494,8 +496,10 @@ else:
                 submitted_pay = st.form_submit_button("Log Payment")
                 if submitted_pay:
                     if verified_pay:
-                        execute_statement("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", 
-                                          {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
+                        execute_statement("""
+                            INSERT INTO payments ("user_id", "project_id", "amount", "date", "notes") 
+                            VALUES (:uid, :pid, :amt, :dt, :n)
+                        """, {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
                         st.success("Logged")
                     else: st.error("Please verify details.")
             st.markdown("### History")
