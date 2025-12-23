@@ -11,6 +11,7 @@ import altair as alt
 import time
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool  # <--- CRITICAL IMPORT FOR SUPABASE
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
@@ -54,14 +55,14 @@ BASE_PRICE = 29.99
 BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
-# --- 2. DATABASE ENGINE (DIRECT MODE) ---
-# We use a cached function to create the engine once.
-# pool_pre_ping=True helps detect and drop "Zombie" connections automatically.
+# --- 2. DATABASE ENGINE (NULL POOL MODE) ---
+# We use NullPool to force a fresh connection every time.
+# This prevents the "Transaction Pooler" from confusing old sessions with new ones.
 @st.cache_resource
 def get_engine():
     try:
         db_url = st.secrets["connections"]["supabase"]["url"]
-        return create_engine(db_url, pool_pre_ping=True)
+        return create_engine(db_url, poolclass=NullPool)
     except Exception as e:
         st.error(f"Database Connection Failed: {e}")
         return None
@@ -74,12 +75,12 @@ def run_query(query, params=None):
         with engine.connect() as conn:
             return pd.read_sql(text(query), conn, params=params)
     except Exception as e:
-        return pd.DataFrame() # Return empty DF on error to prevent app crash
+        return pd.DataFrame() 
 
 def execute_statement(query, params=None):
     """Write Data safely using 'begin' for auto-commit."""
     try:
-        with engine.begin() as conn: # 'begin' automatically commits or rolls back
+        with engine.begin() as conn: 
             conn.execute(text(query), params)
     except Exception as e:
         st.error(f"Database Error: {e}")
