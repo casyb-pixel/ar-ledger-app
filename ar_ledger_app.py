@@ -34,6 +34,11 @@ st.markdown("""
     .referral-box {
         padding: 20px; background-color: #eef2f5; border-radius: 10px; border: 1px dashed #2B588D; text-align: center;
     }
+
+    /* --- HIDE STREAMLIT BRANDING --- */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -46,7 +51,7 @@ else:
     STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_fallback")
 
 STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
-BASE_PRICE = 29.99 # Set your base monthly price here
+BASE_PRICE = 29.99 
 BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 DB_FILE = "ar_ledger.db"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
@@ -59,7 +64,6 @@ conn = get_db_connection()
 
 def init_db():
     c = conn.cursor()
-    # USERS: Added 'referred_by' to track the upstream referrer
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, email TEXT,
         logo_data BLOB, terms_conditions TEXT, company_name TEXT, company_address TEXT,
@@ -100,13 +104,11 @@ def check_password(password, hashed):
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 def get_referral_stats(my_code):
-    """Calculates active referrals and current discount."""
     if not my_code: return 0, 0
-    # Count users referred by this code who are Active or in Trial
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users WHERE referred_by=? AND subscription_status IN ('Active', 'Trial')", (my_code,))
     active_count = c.fetchone()[0]
-    discount_percent = min(active_count * 10, 100) # Cap at 100%
+    discount_percent = min(active_count * 10, 100)
     return active_count, discount_percent
 
 class InvoicePDF(FPDF):
@@ -177,7 +179,6 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
 
 def create_checkout_session(customer_id, discount_percent):
     try:
-        # In a real app, you would create a Stripe Coupon here dynamically based on discount_percent
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
         if not prices.data: return None, "Price Not Found"
         
@@ -189,10 +190,6 @@ def create_checkout_session(customer_id, discount_percent):
             'success_url': 'https://example.com/success',
             'cancel_url': 'https://example.com/cancel'
         }
-        
-        # NOTE: To fully enable coupon logic, you would pass 'discounts': [{'coupon': 'COUPON_ID'}] here.
-        # For this MVP, we are calculating it in the UI.
-        
         session = stripe.checkout.Session.create(**session_args)
         return session.url, None
     except Exception as e: return None, str(e)
@@ -202,11 +199,10 @@ def create_stripe_customer(email, name):
         return stripe.Customer.create(email=email, name=name).id
     except: return None
 
-# --- 4. AUTHENTICATION (MANUAL) ---
+# --- 4. AUTHENTICATION ---
 if 'user_id' not in st.session_state:
     st.session_state.user_id = None
 
-# --- 5. LOGIC FLOW ---
 if st.session_state.user_id is None:
     if os.path.exists("bb_logo.png"): st.image("bb_logo.png", width=200)
     else: st.title("Balance & Build Consulting")
@@ -245,7 +241,10 @@ if st.session_state.user_id is None:
                         my_ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                         today_str = str(datetime.date.today())
                         
-                        # Store 'ref_input' into 'referred_by'
+                        if ref_input:
+                            referrer = conn.execute("SELECT id FROM users WHERE referral_code=?", (ref_input,)).fetchone()
+                            if referrer: conn.execute("UPDATE users SET referral_count = referral_count + 1 WHERE id=?", (referrer[0],))
+                        
                         conn.execute("INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (?,?,?,?,?,?,?,?)", 
                                      (u, h_p, e, cid, my_ref_code, today_str, 'Trial', ref_input))
                         conn.commit(); st.success("Account Created! Please switch to Login tab.")
@@ -255,15 +254,11 @@ if st.session_state.user_id is None:
 
 else:
     user_id = st.session_state.user_id
-    
-    # --- CALCULATE DISCOUNT & TRIAL ---
     status = st.session_state.sub_status
     created_at_str = st.session_state.get('created_at')
     my_code = st.session_state.get('my_ref_code')
-    
     active_referrals, discount_percent = get_referral_stats(my_code)
     
-    # Check Trial
     days_left = 0
     trial_active = False
     if status == 'Trial' and created_at_str:
@@ -274,11 +269,9 @@ else:
             if days_left > 0: trial_active = True
         except: pass
 
-    # If Locked Out (Trial Over & Not Active)
     if status != 'Active' and not trial_active:
         if discount_percent >= 100:
-            st.balloons()
-            st.success("🎉 You have earned FREE ACCESS with 10+ Referrals!")
+            st.balloons(); st.success("🎉 You have earned FREE ACCESS with 10+ Referrals!")
             if st.button("Activate Free Lifetime Access"):
                 conn.execute("UPDATE users SET subscription_status='Active' WHERE id=?", (user_id,))
                 conn.commit(); st.session_state.sub_status = 'Active'; st.rerun()
@@ -286,20 +279,16 @@ else:
             st.warning(f"⚠️ Trial Expired. You have {active_referrals} Active Referrals ({discount_percent}% Discount).")
             new_price = BASE_PRICE * (1 - (discount_percent/100))
             st.info(f"Your Monthly Price: **${new_price:.2f}** (Regular: ${BASE_PRICE})")
-            
             if st.session_state.stripe_cid:
                 url, err = create_checkout_session(st.session_state.stripe_cid, discount_percent)
                 if url: st.link_button("Subscribe Now", url)
-            
             if st.button("Logout"): st.session_state.clear(); st.rerun()
             st.stop()
 
-    # --- MAIN APP UI ---
     u_data = conn.execute("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=?", (user_id,)).fetchone()
     if u_data is None: st.warning("Session expired."); st.session_state.clear(); st.rerun(); st.stop()
     logo, c_name, c_addr, terms = u_data
     
-    # Trial Banner
     if trial_active:
         st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Active Referrals: {active_referrals} (Current Discount: {discount_percent}%)")
 
@@ -374,7 +363,6 @@ else:
                 if st.form_submit_button("Create Project"):
                     conn.execute("INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (user_id, n, c, q, str(start_d), dur, b_street, b_city, b_state, b_zip, s_street, s_city, s_state, s_zip, 1 if is_tax_exempt else 0, po, status, scope))
                     conn.commit(); st.success("Project Saved"); st.rerun()
-
         st.markdown("### Project Management")
         projs = pd.read_sql_query("SELECT id, name, client_name, status, quoted_price FROM projects WHERE user_id=?", conn, params=(user_id,))
         if not projs.empty:
@@ -400,15 +388,24 @@ else:
             p = st.selectbox("Project", projs['name'])
             row = projs[projs['name']==p].iloc[0]
             tax_label = "Tax ($)" + (" - [EXEMPT]" if row['is_tax_exempt'] else "")
+            
+            # --- FIX: Button separated from logic ---
             with st.form("inv", clear_on_submit=True):
                 st.warning(f"Creating invoice for: **{row['name']}**")
                 inv_date = st.date_input("Date", value=datetime.date.today()); a = st.number_input("Amount"); t = st.number_input(tax_label); d = st.text_area("Desc")
-                if st.checkbox("I verify billing is correct") and st.form_submit_button("Generate"):
-                    num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
-                    p_info = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
-                    pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
-                    st.session_state.pdf = pdf
-                    conn.execute("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (?,?,?,?,?,?,?)", (user_id, int(row['id']), num, a+t, str(inv_date), d, t)); conn.commit(); st.success(f"Invoice #{num} Generated")
+                verified = st.checkbox("I verify billing is correct")
+                submitted = st.form_submit_button("Generate")
+                
+                if submitted:
+                    if verified:
+                        num = (conn.execute("SELECT MAX(number) FROM invoices WHERE user_id=?", (user_id,)).fetchone()[0] or 1000) + 1
+                        p_info = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
+                        pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
+                        st.session_state.pdf = pdf
+                        conn.execute("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (?,?,?,?,?,?,?)", (user_id, int(row['id']), num, a+t, str(inv_date), d, t)); conn.commit(); st.success(f"Invoice #{num} Generated")
+                    else:
+                        st.error("Please verify details.")
+
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
 
     elif page == "Payments":
@@ -417,47 +414,39 @@ else:
         if not projs.empty:
             p = st.selectbox("Project", projs['name'])
             row = projs[projs['name']==p].iloc[0]
+            
+            # --- FIX: Button separated from logic ---
             with st.form("pay_form", clear_on_submit=True):
                 st.warning(f"Logging payment for: **{row['name']}**")
                 amt = st.number_input("Amount"); pay_date = st.date_input("Date"); notes = st.text_input("Notes")
-                if st.checkbox("I verify payment details") and st.form_submit_button("Log Payment"):
-                    conn.execute("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (?,?,?,?,?)", (user_id, int(row['id']), amt, str(pay_date), notes)); conn.commit(); st.success("Logged")
+                verified_pay = st.checkbox("I verify payment details")
+                submitted_pay = st.form_submit_button("Log Payment")
+                
+                if submitted_pay:
+                    if verified_pay:
+                        conn.execute("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (?,?,?,?,?)", (user_id, int(row['id']), amt, str(pay_date), notes)); conn.commit(); st.success("Logged")
+                    else:
+                        st.error("Please verify details.")
+
             st.markdown("### History")
             st.dataframe(pd.read_sql_query("SELECT date, amount, notes FROM payments WHERE project_id=?", conn, params=(int(row['id']),)))
 
     elif page == "Settings":
         st.header("Company Settings")
-        
-        # --- REFERRAL HUB ---
-        st.markdown(f"""
-        <div class="referral-box">
-            <h3>🚀 Referral Program</h3>
-            <p>Share your code to earn <b>10% OFF</b> for every active user you refer! (10 Referrals = FREE)</p>
-            <h2>{my_code}</h2>
-            <p>Active Referrals: <b>{active_referrals}</b> | Current Discount: <b>{discount_percent}%</b></p>
-        </div>
-        <br>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div class="referral-box"><h3>🚀 Referral Program</h3><p>Share your code to earn <b>10% OFF</b> for every active user you refer! (10 Referrals = FREE)</p><h2>{my_code}</h2><p>Active Referrals: <b>{active_referrals}</b> | Current Discount: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
         st.progress(min(discount_percent, 100) / 100)
         
         st.markdown("### Edit Profile")
         with st.form("set"):
-            cn = st.text_input("Company Name", value=c_name or "")
-            ca = st.text_area("Address", value=c_addr or "")
-            t_cond = st.text_area("Terms", value=terms or "")
-            l = st.file_uploader("Logo")
-            
+            cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Logo")
             if st.form_submit_button("Save"):
-                # --- ANTI-CHEAT LOGIC ---
-                # Check if this company name exists for a DIFFERENT user ID
-                existing_company = conn.execute("SELECT id FROM users WHERE company_name=? AND id!=?", (cn, user_id)).fetchone()
-                
-                if existing_company and cn.strip() != "":
-                    st.error("⚠️ This Company Name is already registered to another account. Please contact support if this is an error.")
+                # Anti-Cheat: Company Name check
+                existing = conn.execute("SELECT id FROM users WHERE company_name=? AND id!=?", (cn, user_id)).fetchone()
+                if existing and cn.strip() != "": st.error("⚠️ Company Name already registered.")
                 else:
                     lb = l.read() if l else logo
-                    conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=?, terms_conditions=? WHERE id=?", (cn, ca, lb, t_cond, user_id))
-                    conn.commit()
-                    st.success("Settings Saved")
-                    # Force reload to update branding immediately
-                    st.rerun()
+                    conn.execute("UPDATE users SET company_name=?, company_address=?, logo_data=?, terms_conditions=? WHERE id=?", (cn, ca, lb, t_cond, user_id)); conn.commit(); st.success("Saved"); st.rerun()
+
+    if st.sidebar.button("Logout"):
+        st.session_state.clear()
+        st.rerun()
