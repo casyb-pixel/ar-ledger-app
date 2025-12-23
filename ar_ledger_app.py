@@ -9,9 +9,14 @@ import tempfile
 import bcrypt  
 import altair as alt 
 import time
+import matplotlib.pyplot as plt
+import matplotlib
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
+
+# Set Matplotlib to non-interactive mode for server safety
+matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
@@ -198,36 +203,108 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
     pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {project_name}", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {client_name}", ln=1)
     pdf.ln(10)
-    # Table Header
-    pdf.set_fill_color(240, 240, 240); pdf.set_font("Arial", "B", 10)
+    # Table Header (Navy Blue)
+    pdf.set_fill_color(43, 88, 141); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 10)
     pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1)
     pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
     # Rows
-    pdf.set_font("Arial", size=9)
+    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9)
+    fill = False
     for index, row in ledger_df.iterrows():
-        pdf.cell(30, 8, str(row['Date']), 1)
-        pdf.cell(80, 8, str(row['Details'])[:40], 1)
-        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R')
-        pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R')
-        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R')
+        pdf.set_fill_color(240, 240, 240) if fill else pdf.set_fill_color(255, 255, 255)
+        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill)
+        pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill)
+        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill)
+        pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill)
+        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill)
+        fill = not fill
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
-def generate_dashboard_pdf(metrics, company_name):
+def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf = BB_PDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
-    pdf.cell(0, 10, f"FINANCIAL DASHBOARD REPORT", ln=1, align='C')
-    pdf.set_font("Arial", size=12); pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 10, f"Company: {company_name}", ln=1, align='C')
-    pdf.cell(0, 10, f"Date: {datetime.date.today()}", ln=1, align='C')
-    pdf.ln(20)
+    
+    # --- HEADER SECTION ---
+    # Draw Navy Banner
+    pdf.set_fill_color(43, 88, 141) # Navy Blue
+    pdf.rect(0, 0, 210, 40, 'F')
+    
+    # Logo inside Banner
+    if logo_data:
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                if isinstance(logo_data, memoryview): tmp.write(logo_data.tobytes())
+                else: tmp.write(logo_data)
+                tmp_path = tmp.name
+            pdf.image(tmp_path, 10, 8, 25); os.unlink(tmp_path)
+        except: pass
+    
+    # Title Text White
+    pdf.set_xy(40, 10)
+    pdf.set_font("Arial", "B", 20); pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, "EXECUTIVE FINANCIAL REPORT", ln=1)
+    pdf.set_xy(40, 20)
     pdf.set_font("Arial", size=12)
-    pdf.cell(100, 10, "Metric", 1); pdf.cell(50, 10, "Value", 1, 1)
-    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1)
+    
+    pdf.ln(20)
+    
+    # --- METRICS TABLE ---
+    pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Key Performance Indicators", ln=1)
+    pdf.ln(2)
+    
+    # Headers (Gold)
+    pdf.set_fill_color(218, 165, 32); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 11)
+    pdf.cell(100, 10, "Metric Category", 1, 0, 'L', 1)
+    pdf.cell(60, 10, "Value", 1, 1, 'R', 1)
+    
+    # Rows
+    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11)
+    fill = False
     for key, value in metrics.items():
-        pdf.cell(100, 10, key, 1)
-        pdf.cell(50, 10, value, 1, 1, 'R')
+        pdf.set_fill_color(245, 245, 245) if fill else pdf.set_fill_color(255, 255, 255)
+        pdf.cell(100, 10, key, 1, 0, 'L', fill)
+        pdf.cell(60, 10, value, 1, 1, 'R', fill)
+        fill = not fill
+        
+    pdf.ln(15)
+    
+    # --- VISUALS SECTION ---
+    pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Visual Analysis", ln=1)
+    
+    # Generate Charts using Matplotlib (safer for PDF than Altair)
+    if chart_data:
+        # Chart 1: Revenue Breakdown (Bar)
+        plt.figure(figsize=(6, 4))
+        categories = ['Invoiced', 'Collected', 'Outstanding AR']
+        values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]
+        colors = ['#2B588D', '#28a745', '#DAA520'] # Navy, Green, Gold
+        
+        plt.bar(categories, values, color=colors)
+        plt.title('Revenue Distribution', color='#2B588D')
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart1:
+            plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight')
+            pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90)
+            os.unlink(tmp_chart1.name)
+            
+        # Chart 2: Contract Status (Pie)
+        plt.clf() # Clear figure
+        plt.figure(figsize=(6, 4))
+        labels = ['Invoiced', 'Remaining']
+        sizes = [chart_data['Invoiced'], chart_data['Remaining']]
+        plt.pie(sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90)
+        plt.title('Contract Progress', color='#2B588D')
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart2:
+            plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight')
+            pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90)
+            os.unlink(tmp_chart2.name)
+
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def create_checkout_session(customer_id, discount_percent):
@@ -382,7 +459,16 @@ else:
             "Remaining to Invoice": f"${remaining_to_invoice:,.2f}",
             "Outstanding AR": f"${outstanding_ar:,.2f}"
         }
-        pdf_bytes = generate_dashboard_pdf(dash_metrics, c_name or "My Firm")
+        
+        # Prepare Chart Data for PDF
+        chart_data_pdf = {
+            'Invoiced': t_invoiced,
+            'Collected': t_collected,
+            'Outstanding': outstanding_ar,
+            'Remaining': remaining_to_invoice
+        }
+        
+        pdf_bytes = generate_dashboard_pdf(dash_metrics, c_name or "My Firm", logo, chart_data_pdf)
         st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, "dashboard_report.pdf", "application/pdf")
         
         st.markdown("---")
@@ -435,7 +521,6 @@ else:
                 pc2.metric("Total Billed", f"${tot_bill:,.2f}")
                 pc3.metric("Current Balance", f"${curr_bal:,.2f}", delta_color="inverse")
                 
-                # Statement PDF
                 st.markdown("### Project Ledger")
                 c_pdf, c_tbl = st.columns([1, 4])
                 with c_pdf:
