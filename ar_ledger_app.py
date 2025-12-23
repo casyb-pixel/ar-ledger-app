@@ -62,9 +62,7 @@ def run_query(query, params=None):
     return conn.query(query, params=params, ttl=0)
 
 def execute_statement(query, params=None):
-    """
-    Executes a write operation with automatic retry logic.
-    """
+    """Executes a write operation with automatic retry logic."""
     try:
         with conn.session as s:
             s.execute(text(query), params)
@@ -87,7 +85,7 @@ def execute_statement(query, params=None):
         raise e
 
 def init_db():
-    # Initialize Tables safely. Removed try/except so we can see if creation fails.
+    # Initialize Tables with SAFE COLUMN NAMES (issue_date, invoice_num)
     with conn.session as s:
         s.execute(text('''CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT,
@@ -104,12 +102,12 @@ def init_db():
             is_tax_exempt INTEGER DEFAULT 0, po_number TEXT, status TEXT DEFAULT 'Bidding', scope_of_work TEXT
         )'''))
         s.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
-            id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, number INTEGER, 
-            amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
+            id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, invoice_num INTEGER, 
+            amount REAL, issue_date TEXT, description TEXT, tax REAL DEFAULT 0
         )'''))
         s.execute(text('''CREATE TABLE IF NOT EXISTS payments (
             id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount REAL, 
-            date TEXT, notes TEXT
+            payment_date TEXT, notes TEXT
         )'''))
         s.commit()
 
@@ -259,12 +257,8 @@ if st.session_state.user_id is None:
                             today_str = str(datetime.date.today())
                             if ref_input:
                                 execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
-                            
-                            # Using quoted identifiers just in case
-                            execute_statement("""
-                                INSERT INTO users ("username", "password", "email", "stripe_customer_id", "referral_code", "created_at", "subscription_status", "referred_by") 
-                                VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)
-                            """, params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
+                            execute_statement("INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)", 
+                                              params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
                             st.success("Account Created! Please switch to Login tab.")
                     except Exception as err: st.error(f"Error: {err}")
                 else: st.warning("Please fill all fields")
@@ -356,15 +350,15 @@ else:
             p_row = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
             p_quoted, p_status = p_row['quoted_price'] or 0.0, p_row['status']
             
-            # --- LEDGER LOGIC ---
-            df_inv = run_query("SELECT date, number, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
-            df_pay = run_query("SELECT date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
+            # --- LEDGER LOGIC (UPDATED COLUMNS) ---
+            df_inv = run_query("SELECT issue_date, invoice_num, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
+            df_pay = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
             
             ledger_items = []
             for _, r in df_inv.iterrows():
-                ledger_items.append({'Date': r['date'], 'Description': f"Invoice #{r['number']} - {r['description']}", 'Debit': r['amount'], 'Credit': 0, 'Type': 'Invoice'})
+                ledger_items.append({'Date': r['issue_date'], 'Description': f"Invoice #{r['invoice_num']} - {r['description']}", 'Debit': r['amount'], 'Credit': 0, 'Type': 'Invoice'})
             for _, r in df_pay.iterrows():
-                ledger_items.append({'Date': r['date'], 'Description': f"Payment - {r['notes']}", 'Debit': 0, 'Credit': r['amount'], 'Type': 'Payment'})
+                ledger_items.append({'Date': r['payment_date'], 'Description': f"Payment - {r['notes']}", 'Debit': 0, 'Credit': r['amount'], 'Type': 'Payment'})
             
             df_ledger = pd.DataFrame(ledger_items)
             
@@ -418,7 +412,7 @@ else:
                 is_tax_exempt = c2.checkbox("Tax Exempt?"); scope = st.text_area("Scope")
                 if st.form_submit_button("Create Project"):
                     execute_statement("""
-                        INSERT INTO projects ("user_id", "name", "client_name", "quoted_price", "start_date", "duration", "billing_street", "billing_city", "billing_state", "billing_zip", "site_street", "site_city", "site_state", "site_zip", "is_tax_exempt", "po_number", "status", "scope_of_work") 
+                        INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) 
                         VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)
                     """, params={
                         "uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, 
@@ -466,7 +460,7 @@ else:
                 
                 if submitted:
                     if verified:
-                        res_num = run_query("SELECT MAX(number) FROM invoices WHERE user_id=:id", {"id": user_id})
+                        res_num = run_query("SELECT MAX(invoice_num) FROM invoices WHERE user_id=:id", {"id": user_id})
                         current_max = res_num.iloc[0, 0] if not res_num.empty and res_num.iloc[0, 0] is not None else 1000
                         num = current_max + 1
                         
@@ -474,9 +468,8 @@ else:
                         pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
                         st.session_state.pdf = pdf
                         
-                        # --- FIX: Using Quoted Identifiers to prevent 'ProgrammingError' ---
                         execute_statement("""
-                            INSERT INTO invoices ("user_id", "project_id", "number", "amount", "date", "description", "tax") 
+                            INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) 
                             VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)
                         """, {"uid": user_id, "pid": int(row['id']), "num": num, "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
                         st.success(f"Invoice #{num} Generated")
@@ -496,14 +489,12 @@ else:
                 submitted_pay = st.form_submit_button("Log Payment")
                 if submitted_pay:
                     if verified_pay:
-                        execute_statement("""
-                            INSERT INTO payments ("user_id", "project_id", "amount", "date", "notes") 
-                            VALUES (:uid, :pid, :amt, :dt, :n)
-                        """, {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
+                        execute_statement("INSERT INTO payments (user_id, project_id, amount, payment_date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", 
+                                          {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
                         st.success("Logged")
                     else: st.error("Please verify details.")
             st.markdown("### History")
-            hist = run_query("SELECT date, amount, notes FROM payments WHERE project_id=:pid", {"pid": int(row['id'])})
+            hist = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": int(row['id'])})
             st.dataframe(hist)
 
     elif page == "Settings":
