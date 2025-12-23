@@ -245,6 +245,7 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.set_xy(40, 20)
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1)
+    
     pdf.ln(20)
     
     # --- METRICS TABLE ---
@@ -272,29 +273,43 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.cell(0, 10, "Visual Analysis", ln=1)
     
     if chart_data:
-        # Chart 1
-        plt.figure(figsize=(6, 4))
-        categories = ['Invoiced', 'Collected', 'Outstanding AR']
-        values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]
-        colors = ['#2B588D', '#28a745', '#DAA520']
-        plt.bar(categories, values, color=colors)
-        plt.title('Revenue Distribution', color='#2B588D'); plt.grid(axis='y', linestyle='--', alpha=0.7)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart1:
-            plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight')
-            pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90)
-            os.unlink(tmp_chart1.name)
+        # Chart 1: Revenue Breakdown (Bar) - Only if data exists
+        total_rev = chart_data['Invoiced'] + chart_data['Collected'] + chart_data['Outstanding']
+        
+        if total_rev > 0:
+            plt.figure(figsize=(6, 4))
+            categories = ['Invoiced', 'Collected', 'Outstanding AR']
+            values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]
+            colors = ['#2B588D', '#28a745', '#DAA520']
+            plt.bar(categories, values, color=colors)
+            plt.title('Revenue Distribution', color='#2B588D')
+            plt.grid(axis='y', linestyle='--', alpha=0.7)
             
-        # Chart 2
-        plt.clf()
-        plt.figure(figsize=(6, 4))
-        labels = ['Invoiced', 'Remaining']
-        sizes = [chart_data['Invoiced'], chart_data['Remaining']]
-        plt.pie(sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90)
-        plt.title('Contract Progress', color='#2B588D')
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart2:
-            plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight')
-            pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90)
-            os.unlink(tmp_chart2.name)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart1:
+                plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight')
+                pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90)
+                os.unlink(tmp_chart1.name)
+        else:
+            pdf.set_font("Arial", "I", 10)
+            pdf.text(x=20, y=pdf.get_y() + 20, txt="No financial activity recorded yet.")
+
+        # Chart 2: Contract Status (Pie) - Only if sum > 0
+        pie_sizes = [chart_data['Invoiced'], chart_data['Remaining']]
+        
+        if sum(pie_sizes) > 0:
+            plt.clf()
+            plt.figure(figsize=(6, 4))
+            labels = ['Invoiced', 'Remaining']
+            plt.pie(pie_sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90)
+            plt.title('Contract Progress', color='#2B588D')
+            
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart2:
+                plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight')
+                pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90)
+                os.unlink(tmp_chart2.name)
+        else:
+            pdf.set_font("Arial", "I", 10)
+            pdf.text(x=130, y=pdf.get_y() + 20, txt="No contracts active.")
 
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -617,7 +632,6 @@ else:
                         st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
             if "pdf" in st.session_state:
-                # Use stored filename or default fallback
                 fname = st.session_state.get("inv_filename", "invoice.pdf")
                 st.download_button("Download PDF", st.session_state.pdf, fname, "application/pdf")
 
