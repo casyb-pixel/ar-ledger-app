@@ -58,7 +58,7 @@ TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Ba
 conn = st.connection("supabase", type="sql")
 
 def run_query(query, params=None):
-    """Helper to run queries safely with parameters"""
+    """Helper to run queries safely with parameters (Returns DataFrame)"""
     return conn.query(query, params=params, ttl=0)
 
 def execute_statement(query, params=None):
@@ -251,18 +251,19 @@ if st.session_state.user_id is None:
         with st.form("login_form"):
             u = st.text_input("Username"); p = st.text_input("Password", type="password")
             if st.form_submit_button("Login"):
-                df = run_query("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
-                if not df.empty:
-                    rec = df.iloc[0]
-                    if check_password(p, rec['password']):
-                        st.session_state.user_id = int(rec['id'])
-                        st.session_state.sub_status = rec['subscription_status']
-                        st.session_state.stripe_cid = rec['stripe_customer_id']
-                        st.session_state.created_at = rec['created_at']
-                        st.session_state.my_ref_code = rec['referral_code']
-                        st.success("Login successful!"); st.rerun()
-                    else: st.error("Incorrect password")
-                else: st.error("Username not found")
+                # Use direct execution to fetch sensitive login data
+                with conn.session as s:
+                    res = s.execute(text("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u"), {"u": u}).fetchone()
+                    if res:
+                        if check_password(p, res[1]):
+                            st.session_state.user_id = int(res[0])
+                            st.session_state.sub_status = res[2]
+                            st.session_state.stripe_cid = res[3]
+                            st.session_state.created_at = res[4]
+                            st.session_state.my_ref_code = res[5]
+                            st.success("Login successful!"); st.rerun()
+                        else: st.error("Incorrect password")
+                    else: st.error("Username not found")
 
     with tab2:
         st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
@@ -301,14 +302,12 @@ if st.session_state.user_id is None:
 else:
     user_id = st.session_state.user_id
     
-    # Load User Data to get status and created_at
-    # We reload this here to ensure session state stays fresh if admin changes DB
-    df_user = run_query("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id", params={"id": user_id})
-    if df_user.empty: st.session_state.clear(); st.rerun()
-    
-    status = df_user.iloc[0]['subscription_status']
-    created_at_str = df_user.iloc[0]['created_at']
-    my_code = df_user.iloc[0]['referral_code']
+    # --- LOAD USER STATUS (Use Direct Session to avoid caching issues) ---
+    with conn.session as s:
+        res = s.execute(text("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id"), {"id": user_id}).fetchone()
+        if not res:
+            st.session_state.clear(); st.rerun()
+        status, created_at_str, my_code = res[0], res[1], res[2]
     
     active_referrals, discount_percent = get_referral_stats(my_code)
     
@@ -338,11 +337,14 @@ else:
             if st.button("Logout"): st.session_state.clear(); st.rerun()
             st.stop()
 
-    # Load Full User Data
-    df_user_full = run_query("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
-    u_data = df_user_full.iloc[0]
-    logo, c_name, c_addr, terms = u_data['logo_data'], u_data['company_name'], u_data['company_address'], u_data['terms_conditions']
-    
+    # --- LOAD FULL USER DATA (Use Direct Session for Logo safety) ---
+    with conn.session as s:
+        res_full = s.execute(text("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id"), {"id": user_id}).fetchone()
+        logo, c_name, c_addr, terms = res_full[0], res_full[1], res_full[2], res_full[3]
+        # Convert memoryview to bytes immediately
+        if isinstance(logo, memoryview):
+            logo = logo.tobytes()
+
     if trial_active:
         st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Active Referrals: {active_referrals} (Current Discount: {discount_percent}%)")
 
@@ -355,8 +357,7 @@ else:
             st.title(display_title); st.caption(f"Financial Overview for {c_name or 'My Firm'}")
         with col_l:
             if logo: 
-                # Handle display of BYTEA/MemoryView logo
-                st.image(logo if not isinstance(logo, memoryview) else logo.tobytes(), width=150)
+                st.image(logo, width=150)
         st.markdown("---")
         
         st.subheader("🏢 Firm-Wide Performance")
@@ -534,7 +535,6 @@ else:
                 if not existing.empty and cn.strip() != "": 
                     st.error("⚠️ Company Name already registered.")
                 else:
-                    # Only update logo if provided
                     if l:
                         lb = l.read()
                         execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
