@@ -1,8 +1,8 @@
 streamlit
 pandas
-fpdf
-matplotlib
-altair
-streamlit-authenticator
 stripe
 bcrypt
+fpdf
+altair
+sqlalchemy
+psycopg2-binary
