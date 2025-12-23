@@ -8,8 +8,9 @@ import os
 import tempfile
 import bcrypt  
 import altair as alt 
+import time
 from fpdf import FPDF
-from sqlalchemy import text
+from sqlalchemy import text, exc
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
@@ -53,7 +54,7 @@ BASE_PRICE = 29.99
 BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
-# --- 2. DATABASE ENGINE (POSTGRESQL) ---
+# --- 2. DATABASE ENGINE (POSTGRESQL + RETRY LOGIC) ---
 conn = st.connection("supabase", type="sql")
 
 def run_query(query, params=None):
@@ -61,75 +62,59 @@ def run_query(query, params=None):
     return conn.query(query, params=params, ttl=0)
 
 def execute_statement(query, params=None):
-    """Helper for INSERT/UPDATE/DELETE with ROBUST ERROR HANDLING"""
+    """
+    Executes a write operation with automatic retry logic.
+    If the connection is 'stale' (Zombie), it resets and tries one more time.
+    """
     try:
         with conn.session as s:
             s.execute(text(query), params)
             s.commit()
+    except exc.OperationalError:
+        # DB Connection died. Wait, reset, and retry once.
+        time.sleep(1)
+        st.cache_resource.clear() # Clear bad connection cache
+        try:
+            with conn.session as s:
+                s.execute(text(query), params)
+                s.commit()
+        except Exception as e:
+            with conn.session as s:
+                s.rollback()
+            raise e
     except Exception as e:
-        # If DB error, ROLLBACK session so it's not stuck in 'Aborted' state
         with conn.session as s:
             s.rollback()
         raise e
 
 def init_db():
-    # PostgreSQL syntax: SERIAL for AutoIncrement, BYTEA for Blob
-    with conn.session as s:
-        s.execute(text('''CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY, 
-            username TEXT UNIQUE, 
-            password TEXT, 
-            email TEXT,
-            logo_data BYTEA, 
-            terms_conditions TEXT, 
-            company_name TEXT, 
-            company_address TEXT, 
-            company_phone TEXT, 
-            subscription_status TEXT DEFAULT 'Inactive', 
-            created_at TEXT,
-            stripe_customer_id TEXT, 
-            stripe_subscription_id TEXT,
-            referral_code TEXT UNIQUE, 
-            referral_count INTEGER DEFAULT 0,
-            referred_by TEXT
-        )'''))
-        
-        s.execute(text('''CREATE TABLE IF NOT EXISTS projects (
-            id SERIAL PRIMARY KEY, 
-            user_id INTEGER, 
-            name TEXT, 
-            client_name TEXT,
-            quoted_price REAL, 
-            start_date TEXT, 
-            duration INTEGER,
-            billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
-            site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
-            is_tax_exempt INTEGER DEFAULT 0, 
-            po_number TEXT,
-            status TEXT DEFAULT 'Bidding',
-            scope_of_work TEXT
-        )'''))
-        
-        s.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
-            id SERIAL PRIMARY KEY, 
-            user_id INTEGER, 
-            project_id INTEGER,
-            number INTEGER, 
-            amount REAL, 
-            date TEXT, 
-            description TEXT, 
-            tax REAL DEFAULT 0
-        )'''))
-        
-        s.execute(text('''CREATE TABLE IF NOT EXISTS payments (
-            id SERIAL PRIMARY KEY, 
-            user_id INTEGER, 
-            project_id INTEGER,
-            amount REAL, 
-            date TEXT, 
-            notes TEXT
-        )'''))
-        s.commit()
+    # Initialize Tables safely
+    try:
+        with conn.session as s:
+            s.execute(text('''CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT,
+                logo_data BYTEA, terms_conditions TEXT, company_name TEXT, company_address TEXT, 
+                company_phone TEXT, subscription_status TEXT DEFAULT 'Inactive', created_at TEXT,
+                stripe_customer_id TEXT, stripe_subscription_id TEXT, referral_code TEXT UNIQUE, 
+                referral_count INTEGER DEFAULT 0, referred_by TEXT
+            )'''))
+            s.execute(text('''CREATE TABLE IF NOT EXISTS projects (
+                id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, client_name TEXT,
+                quoted_price REAL, start_date TEXT, duration INTEGER,
+                billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
+                site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
+                is_tax_exempt INTEGER DEFAULT 0, po_number TEXT, status TEXT DEFAULT 'Bidding', scope_of_work TEXT
+            )'''))
+            s.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
+                id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, number INTEGER, 
+                amount REAL, date TEXT, description TEXT, tax REAL DEFAULT 0
+            )'''))
+            s.execute(text('''CREATE TABLE IF NOT EXISTS payments (
+                id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount REAL, 
+                date TEXT, notes TEXT
+            )'''))
+            s.commit()
+    except: pass 
 
 init_db()
 
@@ -164,10 +149,8 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     if logo_data:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                if isinstance(logo_data, memoryview):
-                    tmp.write(logo_data.tobytes())
-                else:
-                    tmp.write(logo_data)
+                if isinstance(logo_data, memoryview): tmp.write(logo_data.tobytes())
+                else: tmp.write(logo_data)
                 tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
@@ -223,27 +206,21 @@ def create_checkout_session(customer_id, discount_percent):
     try:
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
         if not prices.data: return None, "Price Not Found"
-        
         session_args = {
-            'customer': customer_id,
-            'payment_method_types': ['card'],
+            'customer': customer_id, 'payment_method_types': ['card'],
             'line_items': [{'price': prices.data[0].id, 'quantity': 1}],
-            'mode': 'subscription',
-            'success_url': 'https://example.com/success',
-            'cancel_url': 'https://example.com/cancel'
+            'mode': 'subscription', 'success_url': 'https://example.com/success', 'cancel_url': 'https://example.com/cancel'
         }
         session = stripe.checkout.Session.create(**session_args)
         return session.url, None
     except Exception as e: return None, str(e)
 
 def create_stripe_customer(email, name):
-    try:
-        return stripe.Customer.create(email=email, name=name).id
+    try: return stripe.Customer.create(email=email, name=name).id
     except: return None
 
 # --- 4. AUTHENTICATION ---
-if 'user_id' not in st.session_state:
-    st.session_state.user_id = None
+if 'user_id' not in st.session_state: st.session_state.user_id = None
 
 if st.session_state.user_id is None:
     if os.path.exists("bb_logo.png"): st.image("bb_logo.png", width=200)
@@ -259,10 +236,8 @@ if st.session_state.user_id is None:
                     res = s.execute(text("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u"), {"u": u}).fetchone()
                     if res:
                         if check_password(p, res[1]):
-                            st.session_state.user_id = int(res[0])
-                            st.session_state.sub_status = res[2]
-                            st.session_state.stripe_cid = res[3]
-                            st.session_state.created_at = res[4]
+                            st.session_state.user_id = int(res[0]); st.session_state.sub_status = res[2]
+                            st.session_state.stripe_cid = res[3]; st.session_state.created_at = res[4]
                             st.session_state.my_ref_code = res[5]
                             st.success("Login successful!"); st.rerun()
                         else: st.error("Incorrect password")
@@ -275,48 +250,37 @@ if st.session_state.user_id is None:
             ref_input = st.text_input("Referral Code (Got one?)")
             st.markdown("---"); st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
             terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.", value=False)
-            
             if st.form_submit_button("Create Account"):
                 if not terms_agreed: st.error("You must agree to the Terms and Conditions.")
                 elif u and p and e:
                     try:
                         check = run_query("SELECT id FROM users WHERE username=:u", params={"u": u})
-                        if not check.empty:
-                            st.error("Username already taken.")
+                        if not check.empty: st.error("Username already taken.")
                         else:
                             h_p = hash_password(p); cid = create_stripe_customer(e, u)
                             my_ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                             today_str = str(datetime.date.today())
-                            
                             if ref_input:
                                 execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
-                            
-                            execute_statement("""
-                                INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) 
-                                VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)
-                            """, params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
-                            
+                            execute_statement("INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)", 
+                                              params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
                             st.success("Account Created! Please switch to Login tab.")
                     except Exception as err: st.error(f"Error: {err}")
                 else: st.warning("Please fill all fields")
 
 else:
     user_id = st.session_state.user_id
-    
     with conn.session as s:
         res = s.execute(text("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id"), {"id": user_id}).fetchone()
         if not res: st.session_state.clear(); st.rerun()
         status, created_at_str, my_code = res[0], res[1], res[2]
     
     active_referrals, discount_percent = get_referral_stats(my_code)
-    
-    days_left = 0
-    trial_active = False
+    days_left = 0; trial_active = False
     if status == 'Trial' and created_at_str:
         try:
             start_date = datetime.datetime.strptime(created_at_str, '%Y-%m-%d').date()
-            days_elapsed = (datetime.date.today() - start_date).days
-            days_left = 30 - days_elapsed
+            days_left = 30 - (datetime.date.today() - start_date).days
             if days_left > 0: trial_active = True
         except: pass
 
@@ -349,14 +313,13 @@ else:
     if page == "Dashboard":
         col_t, col_l = st.columns([4, 1])
         with col_t:
-            display_title = f"{c_name} AR Ledger" if c_name else "Balance & Build AR Ledger"
-            st.title(display_title); st.caption(f"Financial Overview for {c_name or 'My Firm'}")
+            st.title(f"{c_name} AR Ledger" if c_name else "Balance & Build AR Ledger")
+            st.caption(f"Financial Overview for {c_name or 'My Firm'}")
         with col_l:
             if logo: st.image(logo, width=150)
         st.markdown("---")
         
-        st.subheader("🏢 Firm-Wide Performance")
-        
+        # Helper for scalar
         def get_scalar(q, p):
             res = run_query(q, p)
             return res.iloc[0, 0] if not res.empty and res.iloc[0, 0] is not None else 0.0
@@ -389,24 +352,55 @@ else:
             p_choice = st.selectbox("Select Project", projs['name'])
             p_id = int(projs[projs['name'] == p_choice]['id'].values[0])
             
-            p_row_df = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id})
-            p_row = p_row_df.iloc[0]
-            p_quoted = p_row['quoted_price'] or 0.0
-            p_status = p_row['status']
+            p_row = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
+            p_quoted, p_status = p_row['quoted_price'] or 0.0, p_row['status']
             
-            p_inv = get_scalar("SELECT SUM(amount) FROM invoices WHERE project_id=:id", {"id": p_id})
-            p_col = get_scalar("SELECT SUM(amount) FROM payments WHERE project_id=:id", {"id": p_id})
+            # --- LEDGER LOGIC ---
+            # Fetch Invoices & Payments to build a unified ledger
+            df_inv = run_query("SELECT date, number, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
+            df_pay = run_query("SELECT date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
             
-            st.caption(f"Status: **{p_status}**")
-            pm1, pm2, pm3, pm4 = st.columns(4)
-            pm1.metric(f"Contract", f"${p_quoted:,.2f}"); pm2.metric("Invoiced", f"${p_inv:,.2f}")
-            pm3.metric("Collected", f"${p_col:,.2f}"); pm4.metric("Remaining", f"${p_quoted - p_inv:,.2f}")
-            try:
-                start_dt = datetime.datetime.strptime(p_row['start_date'], '%Y-%m-%d').date()
-                end_dt = start_dt + datetime.timedelta(days=p_row['duration'])
-                timeline_chart = alt.Chart(pd.DataFrame([{'Task': 'Project Duration', 'Start': str(start_dt), 'End': str(end_dt), 'Project': p_choice}])).mark_bar(size=20, color='#2B588D').encode(x='Start:T', x2='End:T', y=alt.Y('Project', axis=None), tooltip=['Task', 'Start', 'End']).properties(height=100)
-                st.altair_chart(timeline_chart, use_container_width=True)
-            except: pass
+            ledger_items = []
+            for _, r in df_inv.iterrows():
+                ledger_items.append({'Date': r['date'], 'Description': f"Invoice #{r['number']} - {r['description']}", 'Debit': r['amount'], 'Credit': 0, 'Type': 'Invoice'})
+            for _, r in df_pay.iterrows():
+                ledger_items.append({'Date': r['date'], 'Description': f"Payment - {r['notes']}", 'Debit': 0, 'Credit': r['amount'], 'Type': 'Payment'})
+            
+            df_ledger = pd.DataFrame(ledger_items)
+            
+            if not df_ledger.empty:
+                df_ledger['Date'] = pd.to_datetime(df_ledger['Date'])
+                df_ledger = df_ledger.sort_values(by='Date').reset_index(drop=True)
+                df_ledger['Balance'] = (df_ledger['Debit'] - df_ledger['Credit']).cumsum()
+                df_ledger['Date'] = df_ledger['Date'].dt.date
+                
+                # Metrics
+                total_inv = df_ledger['Debit'].sum()
+                total_pay = df_ledger['Credit'].sum()
+                current_bal = total_inv - total_pay
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Contract Value", f"${p_quoted:,.2f}")
+                col2.metric("Total Billed", f"${total_inv:,.2f}")
+                col3.metric("Current Balance (AR)", f"${current_bal:,.2f}", delta_color="inverse")
+                
+                st.markdown("### Project Ledger")
+                st.dataframe(df_ledger, use_container_width=True)
+                
+                # Visuals for Ledger
+                l1, l2 = st.columns(2)
+                with l1:
+                    st.markdown("##### Financial Trajectory (Running Balance)")
+                    line = alt.Chart(df_ledger).mark_line(point=True).encode(x='Date', y='Balance', tooltip=['Date', 'Balance', 'Description']).properties(height=300)
+                    st.altair_chart(line, use_container_width=True)
+                with l2:
+                    st.markdown("##### Billed vs Collected")
+                    bar_data = pd.DataFrame({'Type': ['Billed', 'Collected'], 'Amount': [total_inv, total_pay]})
+                    bar = alt.Chart(bar_data).mark_bar().encode(x='Type', y='Amount', color='Type', tooltip=['Type', 'Amount']).properties(height=300)
+                    st.altair_chart(bar, use_container_width=True)
+            else:
+                st.info("No transactions yet for this project.")
+
         else: st.info("No projects found.")
 
     elif page == "Projects":
@@ -481,14 +475,10 @@ else:
                         p_info = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
                         pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
                         st.session_state.pdf = pdf
-                        
-                        execute_statement("""
-                            INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) 
-                            VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)
-                        """, {"uid": user_id, "pid": int(row['id']), "num": num, "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
+                        execute_statement("INSERT INTO invoices (user_id, project_id, number, amount, date, description, tax) VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)", 
+                                          {"uid": user_id, "pid": int(row['id']), "num": num, "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
                         st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
-
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
 
     elif page == "Payments":
@@ -497,22 +487,17 @@ else:
         if not projs.empty:
             p = st.selectbox("Project", projs['name'])
             row = projs[projs['name']==p].iloc[0]
-            
             with st.form("pay_form", clear_on_submit=True):
                 st.warning(f"Logging payment for: **{row['name']}**")
                 amt = st.number_input("Amount"); pay_date = st.date_input("Date"); notes = st.text_input("Notes")
                 verified_pay = st.checkbox("I verify payment details")
                 submitted_pay = st.form_submit_button("Log Payment")
-                
                 if submitted_pay:
                     if verified_pay:
-                        execute_statement("""
-                            INSERT INTO payments (user_id, project_id, amount, date, notes) 
-                            VALUES (:uid, :pid, :amt, :dt, :n)
-                        """, {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
+                        execute_statement("INSERT INTO payments (user_id, project_id, amount, date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", 
+                                          {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
                         st.success("Logged")
                     else: st.error("Please verify details.")
-
             st.markdown("### History")
             hist = run_query("SELECT date, amount, notes FROM payments WHERE project_id=:pid", {"pid": int(row['id'])})
             st.dataframe(hist)
@@ -521,14 +506,12 @@ else:
         st.header("Company Settings")
         st.markdown(f"""<div class="referral-box"><h3>🚀 Referral Program</h3><p>Share your code to earn <b>10% OFF</b> for every active user you refer! (10 Referrals = FREE)</p><h2>{my_code}</h2><p>Active Referrals: <b>{active_referrals}</b> | Current Discount: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
         st.progress(min(discount_percent, 100) / 100)
-        
         st.markdown("### Edit Profile")
         with st.form("set"):
             cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Logo")
             if st.form_submit_button("Save"):
                 existing = run_query("SELECT id FROM users WHERE company_name=:cn AND id!=:uid", {"cn": cn, "uid": user_id})
-                if not existing.empty and cn.strip() != "": 
-                    st.error("⚠️ Company Name already registered.")
+                if not existing.empty and cn.strip() != "": st.error("⚠️ Company Name already registered.")
                 else:
                     if l:
                         lb = l.read()
@@ -537,6 +520,4 @@ else:
                         execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                     st.success("Saved"); st.rerun()
 
-    if st.sidebar.button("Logout"):
-        st.session_state.clear()
-        st.rerun()
+    if st.sidebar.button("Logout"): st.session_state.clear(); st.rerun()
