@@ -15,7 +15,7 @@ from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-# Set Matplotlib to non-interactive mode for server safety
+# Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
@@ -212,7 +212,12 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9)
     fill = False
     for index, row in ledger_df.iterrows():
-        pdf.set_fill_color(240, 240, 240) if fill else pdf.set_fill_color(255, 255, 255)
+        # Replaced one-line if/else with standard block to prevent "None" printing
+        if fill:
+            pdf.set_fill_color(240, 240, 240)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+            
         pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill)
         pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill)
         pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill)
@@ -264,7 +269,12 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11)
     fill = False
     for key, value in metrics.items():
-        pdf.set_fill_color(245, 245, 245) if fill else pdf.set_fill_color(255, 255, 255)
+        # Replaced one-line if/else with standard block to prevent "None" printing
+        if fill:
+            pdf.set_fill_color(245, 245, 245)
+        else:
+            pdf.set_fill_color(255, 255, 255)
+            
         pdf.cell(100, 10, key, 1, 0, 'L', fill)
         pdf.cell(60, 10, value, 1, 1, 'R', fill)
         fill = not fill
@@ -275,7 +285,7 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Visual Analysis", ln=1)
     
-    # Generate Charts using Matplotlib (safer for PDF than Altair)
+    # Generate Charts using Matplotlib
     if chart_data:
         # Chart 1: Revenue Breakdown (Bar)
         plt.figure(figsize=(6, 4))
@@ -460,7 +470,6 @@ else:
             "Outstanding AR": f"${outstanding_ar:,.2f}"
         }
         
-        # Prepare Chart Data for PDF
         chart_data_pdf = {
             'Invoiced': t_invoiced,
             'Collected': t_collected,
@@ -521,6 +530,7 @@ else:
                 pc2.metric("Total Billed", f"${tot_bill:,.2f}")
                 pc3.metric("Current Balance", f"${curr_bal:,.2f}", delta_color="inverse")
                 
+                # Statement PDF
                 st.markdown("### Project Ledger")
                 c_pdf, c_tbl = st.columns([1, 4])
                 with c_pdf:
