@@ -212,12 +212,8 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9)
     fill = False
     for index, row in ledger_df.iterrows():
-        # Replaced one-line if/else with standard block to prevent "None" printing
-        if fill:
-            pdf.set_fill_color(240, 240, 240)
-        else:
-            pdf.set_fill_color(255, 255, 255)
-            
+        if fill: pdf.set_fill_color(240, 240, 240)
+        else: pdf.set_fill_color(255, 255, 255)
         pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill)
         pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill)
         pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill)
@@ -231,11 +227,9 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.add_page()
     
     # --- HEADER SECTION ---
-    # Draw Navy Banner
     pdf.set_fill_color(43, 88, 141) # Navy Blue
     pdf.rect(0, 0, 210, 40, 'F')
     
-    # Logo inside Banner
     if logo_data:
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -245,14 +239,12 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
             pdf.image(tmp_path, 10, 8, 25); os.unlink(tmp_path)
         except: pass
     
-    # Title Text White
     pdf.set_xy(40, 10)
     pdf.set_font("Arial", "B", 20); pdf.set_text_color(255, 255, 255)
     pdf.cell(0, 10, "EXECUTIVE FINANCIAL REPORT", ln=1)
     pdf.set_xy(40, 20)
     pdf.set_font("Arial", size=12)
     pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1)
-    
     pdf.ln(20)
     
     # --- METRICS TABLE ---
@@ -260,21 +252,15 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.cell(0, 10, "Key Performance Indicators", ln=1)
     pdf.ln(2)
     
-    # Headers (Gold)
     pdf.set_fill_color(218, 165, 32); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 11)
     pdf.cell(100, 10, "Metric Category", 1, 0, 'L', 1)
     pdf.cell(60, 10, "Value", 1, 1, 'R', 1)
     
-    # Rows
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11)
     fill = False
     for key, value in metrics.items():
-        # Replaced one-line if/else with standard block to prevent "None" printing
-        if fill:
-            pdf.set_fill_color(245, 245, 245)
-        else:
-            pdf.set_fill_color(255, 255, 255)
-            
+        if fill: pdf.set_fill_color(245, 245, 245)
+        else: pdf.set_fill_color(255, 255, 255)
         pdf.cell(100, 10, key, 1, 0, 'L', fill)
         pdf.cell(60, 10, value, 1, 1, 'R', fill)
         fill = not fill
@@ -285,31 +271,26 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Visual Analysis", ln=1)
     
-    # Generate Charts using Matplotlib
     if chart_data:
-        # Chart 1: Revenue Breakdown (Bar)
+        # Chart 1
         plt.figure(figsize=(6, 4))
         categories = ['Invoiced', 'Collected', 'Outstanding AR']
         values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]
-        colors = ['#2B588D', '#28a745', '#DAA520'] # Navy, Green, Gold
-        
+        colors = ['#2B588D', '#28a745', '#DAA520']
         plt.bar(categories, values, color=colors)
-        plt.title('Revenue Distribution', color='#2B588D')
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        
+        plt.title('Revenue Distribution', color='#2B588D'); plt.grid(axis='y', linestyle='--', alpha=0.7)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart1:
             plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight')
             pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90)
             os.unlink(tmp_chart1.name)
             
-        # Chart 2: Contract Status (Pie)
-        plt.clf() # Clear figure
+        # Chart 2
+        plt.clf()
         plt.figure(figsize=(6, 4))
         labels = ['Invoiced', 'Remaining']
         sizes = [chart_data['Invoiced'], chart_data['Remaining']]
         plt.pie(sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90)
         plt.title('Contract Progress', color='#2B588D')
-        
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart2:
             plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight')
             pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90)
@@ -392,7 +373,6 @@ if st.session_state.user_id is None:
 else:
     user_id = st.session_state.user_id
     
-    # Reload User Context
     df_user = run_query("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty: st.session_state.clear(); st.rerun()
     status, created_at_str, my_code = df_user.iloc[0]['subscription_status'], df_user.iloc[0]['created_at'], df_user.iloc[0]['referral_code']
@@ -441,7 +421,6 @@ else:
             if logo: st.image(logo, width=150)
         st.markdown("---")
         
-        # Metrics
         def get_scalar(q, p):
             res = run_query(q, p)
             return res.iloc[0, 0] if not res.empty and res.iloc[0, 0] is not None else 0.0
@@ -478,7 +457,8 @@ else:
         }
         
         pdf_bytes = generate_dashboard_pdf(dash_metrics, c_name or "My Firm", logo, chart_data_pdf)
-        st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, "dashboard_report.pdf", "application/pdf")
+        report_name = f"{c_name or 'Company'}_Executive_Report_{datetime.date.today()}.pdf"
+        st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, report_name, "application/pdf")
         
         st.markdown("---")
         c1, c2 = st.columns(2)
@@ -626,13 +606,20 @@ else:
                         pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
                         st.session_state.pdf = pdf
                         
+                        # --- CAPTURE FILENAME FOR DOWNLOAD BUTTON ---
+                        file_name = f"{row['client_name']}_Invoice#{num}_{inv_date}.pdf"
+                        st.session_state.inv_filename = file_name
+                        
                         execute_statement("""
                             INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) 
                             VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)
                         """, {"uid": user_id, "pid": int(row['id']), "num": int(num), "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
                         st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
-            if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
+            if "pdf" in st.session_state:
+                # Use stored filename or default fallback
+                fname = st.session_state.get("inv_filename", "invoice.pdf")
+                st.download_button("Download PDF", st.session_state.pdf, fname, "application/pdf")
 
     elif page == "Payments":
         st.subheader("Receive Payment")
