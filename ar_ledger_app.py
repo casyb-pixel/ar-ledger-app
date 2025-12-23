@@ -11,7 +11,7 @@ import altair as alt
 import time
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
-from sqlalchemy.pool import NullPool  # <--- CRITICAL IMPORT FOR SUPABASE
+from sqlalchemy.pool import NullPool
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
@@ -56,8 +56,6 @@ BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
 # --- 2. DATABASE ENGINE (NULL POOL MODE) ---
-# We use NullPool to force a fresh connection every time.
-# This prevents the "Transaction Pooler" from confusing old sessions with new ones.
 @st.cache_resource
 def get_engine():
     try:
@@ -490,7 +488,7 @@ else:
                         execute_statement("""
                             INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) 
                             VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)
-                        """, {"uid": user_id, "pid": int(row['id']), "num": num, "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
+                        """, {"uid": user_id, "pid": int(row['id']), "num": int(num), "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
                         st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
             if "pdf" in st.session_state: st.download_button("Download PDF", st.session_state.pdf, "inv.pdf")
