@@ -132,6 +132,17 @@ def get_referral_stats(my_code):
         return active_count, discount_percent
     return 0, 0
 
+def parse_currency(value):
+    """Cleans user input (removes $ and ,) and converts to float."""
+    if not value: return 0.0
+    if isinstance(value, (int, float)): return float(value)
+    # Remove '$' and ',' and spaces, then convert
+    clean = str(value).replace('$', '').replace(',', '').strip()
+    try:
+        return float(clean)
+    except:
+        return 0.0
+
 # --- PDF GENERATOR CLASS ---
 class BB_PDF(FPDF):
     def footer(self):
@@ -554,7 +565,9 @@ else:
             with st.form("new_proj"):
                 c1, c2 = st.columns(2)
                 n = c1.text_input("Project Name"); c = c2.text_input("Client Name")
-                q = c1.number_input("Quoted Price ($)", min_value=0.0); dur = c2.number_input("Duration (Days)", min_value=1)
+                # CHANGED TO TEXT INPUT FOR BETTER UX
+                q_str = c1.text_input("Quoted Price ($)", placeholder="0.00")
+                dur = c2.number_input("Duration (Days)", min_value=1)
                 st.markdown("##### Addresses")
                 ac1, ac2 = st.columns(2)
                 with ac1: b_street = st.text_input("Billing Street"); b_city = st.text_input("Billing City"); b_state = st.text_input("Billing State"); b_zip = st.text_input("Billing Zip")
@@ -565,6 +578,9 @@ else:
                 is_tax_exempt = c2.checkbox("Tax Exempt?"); scope = st.text_area("Scope")
                 submitted = st.form_submit_button("Create Project")
                 if submitted:
+                    # Clean the currency string before inserting
+                    q = parse_currency(q_str)
+                    
                     execute_statement("""
                         INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) 
                         VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)
@@ -608,11 +624,21 @@ else:
             
             with st.form("inv", clear_on_submit=True):
                 st.warning(f"Creating invoice for: **{row['name']}**")
-                inv_date = st.date_input("Date", value=datetime.date.today()); a = st.number_input("Amount"); t = st.number_input(tax_label); d = st.text_area("Desc")
+                inv_date = st.date_input("Date", value=datetime.date.today())
+                
+                # CHANGED TO TEXT INPUTS
+                a_str = st.text_input("Amount ($)", placeholder="0.00")
+                t_str = st.text_input(tax_label, placeholder="0.00")
+                d = st.text_area("Desc")
+                
                 verified = st.checkbox("I verify billing is correct")
                 submitted = st.form_submit_button("Generate")
                 if submitted:
                     if verified:
+                        # Clean currency strings
+                        a = parse_currency(a_str)
+                        t = parse_currency(t_str)
+                        
                         res_num = run_query("SELECT MAX(invoice_num) FROM invoices WHERE user_id=:id", {"id": user_id})
                         current_max = res_num.iloc[0, 0] if not res_num.empty and res_num.iloc[0, 0] is not None else 1000
                         num = current_max + 1
@@ -643,11 +669,18 @@ else:
             row = projs[projs['name']==p].iloc[0]
             with st.form("pay_form", clear_on_submit=True):
                 st.warning(f"Logging payment for: **{row['name']}**")
-                amt = st.number_input("Amount"); pay_date = st.date_input("Date"); notes = st.text_input("Notes")
+                
+                # CHANGED TO TEXT INPUT
+                amt_str = st.text_input("Amount ($)", placeholder="0.00")
+                
+                pay_date = st.date_input("Date"); notes = st.text_input("Notes")
                 verified_pay = st.checkbox("I verify payment details")
                 submitted_pay = st.form_submit_button("Log Payment")
                 if submitted_pay:
                     if verified_pay:
+                        # Clean currency string
+                        amt = parse_currency(amt_str)
+                        
                         execute_statement("INSERT INTO payments (user_id, project_id, amount, payment_date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", 
                                           {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
                         st.success("Logged")
