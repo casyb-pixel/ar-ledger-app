@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
 # Set Matplotlib to non-interactive mode
-matplotlist.markdownb.use('Agg')
+matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
