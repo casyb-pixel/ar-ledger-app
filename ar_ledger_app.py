@@ -21,7 +21,7 @@ from sqlalchemy.pool import NullPool
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
-st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
+st.set_page_config(page_title="ProgressBill Pro", layout="wide")
 
 st.markdown("""
     <style>
@@ -59,7 +59,7 @@ else:
 
 STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
 BASE_PRICE = 29.99 
-BB_WATERMARK = "Powered by Balance & Build Consulting, LLC"
+BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
 # --- 2. DATABASE ENGINE (NULL POOL MODE) ---
@@ -204,8 +204,6 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
 def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, client_name):
     pdf = BB_PDF()
     pdf.add_page()
-    
-    # FIXED LOGO HANDLING
     if logo_data:
         try:
             image = Image.open(io.BytesIO(logo_data))
@@ -215,7 +213,6 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
             pdf.image(tmp_path, 10, 10, 35)
             os.unlink(tmp_path)
         except: pass
-        
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, "STATEMENT OF ACCOUNT", ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0)
@@ -358,7 +355,9 @@ if 'user_id' not in st.session_state: st.session_state.user_id = None
 
 if st.session_state.user_id is None:
     if os.path.exists("bb_logo.png"): st.image("bb_logo.png", width=200)
-    else: st.title("Balance & Build Consulting")
+    else:
+        st.title("ProgressBill Pro")
+        st.caption("Powered by Balance & Build Consulting")
 
     tab1, tab2 = st.tabs(["Login", "Signup"])
     
@@ -453,7 +452,7 @@ else:
     if page == "Dashboard":
         col_t, col_l = st.columns([4, 1])
         with col_t:
-            st.title(f"{c_name} AR Ledger" if c_name else "Balance & Build AR Ledger")
+            st.title(f"{c_name} - ProgressBill Pro" if c_name else "ProgressBill Pro")
             st.caption(f"Financial Overview for {c_name or 'My Firm'}")
         with col_l:
             if logo: st.image(logo, width=150)
