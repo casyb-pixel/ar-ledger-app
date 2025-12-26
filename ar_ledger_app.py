@@ -214,7 +214,8 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
             os.unlink(tmp_path)
         except: pass
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
-    pdf.cell(0, 10, "STATEMENT OF ACCOUNT", ln=1, align='R')
+    # CHANGED FROM "STATEMENT OF ACCOUNT" TO "PROJECT STATEMENT"
+    pdf.cell(0, 10, "PROJECT STATEMENT", ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R')
     pdf.ln(10)
