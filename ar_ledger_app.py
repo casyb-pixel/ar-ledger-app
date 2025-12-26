@@ -11,6 +11,8 @@ import altair as alt
 import time
 import matplotlib.pyplot as plt
 import matplotlib
+import io
+from PIL import Image
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
@@ -155,14 +157,18 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf = BB_PDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
+    
+    # FIXED LOGO HANDLING (AUTO-CONVERT TO PNG)
     if logo_data:
         try:
+            image = Image.open(io.BytesIO(logo_data))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                if isinstance(logo_data, memoryview): tmp.write(logo_data.tobytes())
-                else: tmp.write(logo_data)
+                image.save(tmp, format="PNG")
                 tmp_path = tmp.name
-            pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
+            pdf.image(tmp_path, 10, 10, 35)
+            os.unlink(tmp_path)
         except: pass
+        
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
     pdf.set_font("Arial", size=10)
@@ -198,14 +204,18 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
 def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, client_name):
     pdf = BB_PDF()
     pdf.add_page()
+    
+    # FIXED LOGO HANDLING
     if logo_data:
         try:
+            image = Image.open(io.BytesIO(logo_data))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                if isinstance(logo_data, memoryview): tmp.write(logo_data.tobytes())
-                else: tmp.write(logo_data)
+                image.save(tmp, format="PNG")
                 tmp_path = tmp.name
-            pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
+            pdf.image(tmp_path, 10, 10, 35)
+            os.unlink(tmp_path)
         except: pass
+        
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, "STATEMENT OF ACCOUNT", ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0)
@@ -241,13 +251,15 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     pdf.set_fill_color(43, 88, 141) # Navy Blue
     pdf.rect(0, 0, 210, 40, 'F')
     
+    # FIXED LOGO HANDLING (Different Coordinates for Dashboard)
     if logo_data:
         try:
+            image = Image.open(io.BytesIO(logo_data))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                if isinstance(logo_data, memoryview): tmp.write(logo_data.tobytes())
-                else: tmp.write(logo_data)
+                image.save(tmp, format="PNG")
                 tmp_path = tmp.name
-            pdf.image(tmp_path, 10, 8, 25); os.unlink(tmp_path)
+            pdf.image(tmp_path, 10, 8, 25) # Note the coordinates 10, 8, 25
+            os.unlink(tmp_path)
         except: pass
     
     pdf.set_xy(40, 10)
