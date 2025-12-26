@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
 # Set Matplotlib to non-interactive mode
-matplotlib.use('Agg')
+matplotlist.markdownb.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
 st.set_page_config(page_title="Balance & Build AR Ledger", layout="wide")
@@ -41,9 +41,9 @@ st.markdown("""
     .referral-box {
         padding: 20px; background-color: #eef2f5; border-radius: 10px; border: 1px dashed #2B588D; text-align: center;
     }
+    /* HIDDEN ELEMENTS - Removed 'header' so mobile menu works */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
