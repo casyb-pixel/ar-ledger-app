@@ -25,25 +25,60 @@ st.set_page_config(page_title="ProgressBill Pro", layout="wide")
 
 st.markdown("""
     <style>
-    .stApp { background-color: #f4f6f9; }
+    /* --- MAIN APP STYLING --- */
+    .stApp { 
+        background-color: #f4f6f9;
+        /* FORCE TEXT TO BLACK so Night Mode doesn't make it white-on-white */
+        color: #000000 !important; 
+    }
+    
+    /* SIDEBAR STYLING */
     [data-testid="stSidebar"] { background-color: #2B588D; }
     [data-testid="stSidebar"] * { color: white !important; }
+    
+    /* METRIC CARDS */
     div[data-testid="metric-container"] {
         background-color: white; padding: 20px; border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 6px solid #DAA520; text-align: center;
+        color: black; /* Force text black inside cards */
     }
-    h1, h2, h3 { color: #2B588D; font-family: 'Helvetica', sans-serif; }
+    
+    /* HEADERS */
+    h1, h2, h3 { color: #2B588D !important; font-family: 'Helvetica', sans-serif; }
+    
+    /* BUTTONS */
     .stButton>button {
         background-color: #2B588D; color: white; border: 1px solid #DAA520; border-radius: 5px;
+        transition: all 0.3s ease;
     }
     .stButton>button:hover {
         background-color: #DAA520; color: white; border-color: #2B588D;
     }
-    .stAlert { border: 1px solid #DAA520; }
+    
+    /* REFERRAL BOX */
     .referral-box {
         padding: 20px; background-color: #eef2f5; border-radius: 10px; border: 1px dashed #2B588D; text-align: center;
     }
-    /* HIDDEN ELEMENTS - Removed 'header' so mobile menu works */
+
+    /* --- MOBILE OPTIMIZATION (Screens smaller than 600px) --- */
+    @media only screen and (max-width: 600px) {
+        /* Make buttons full width for easy thumb tapping */
+        .stButton>button {
+            width: 100%;
+            margin-top: 10px;
+            padding: 15px;
+        }
+        /* Reduce empty space on sides so table fits better */
+        .block-container {
+            padding-left: 1rem;
+            padding-right: 1rem;
+        }
+        /* Adjust font sizes */
+        h1 { font-size: 24px !important; }
+        h2 { font-size: 20px !important; }
+    }
+
+    /* HIDE STREAMLIT BRANDING (But keep mobile menu visible) */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
