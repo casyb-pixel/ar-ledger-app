@@ -28,7 +28,6 @@ except ImportError:
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
-# We try to load the favicon file if it exists
 fav_icon = "favicon.png" if os.path.exists("favicon.png") else None
 
 st.set_page_config(
@@ -38,82 +37,35 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS FOR "PRO" LOOK ---
+# --- ADMIN CONFIGURATION ---
+ADMIN_USERNAME = "admin" # CHANGE THIS to whatever username you want to use for the admin account
+AFFILIATE_COMMISSION_PER_USER = 10.00 # $10 per active user
+
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
-    /* GLOBAL RESET */
-    .stApp { 
-        background-color: #f4f6f9;
-        color: #000000 !important; 
-    }
-    
-    /* SIDEBAR STYLING */
+    .stApp { background-color: #f4f6f9; color: #000000 !important; }
     [data-testid="stSidebar"] { background-color: #2B588D; }
     [data-testid="stSidebar"] * { color: white !important; }
-    
-    /* HIDE DEFAULT RADIO BUTTONS IF USED */
     div.row-widget.stRadio > div { flex-direction: row; }
-    
-    /* --- DASHBOARD CARDS (The "Pro" Look) --- */
     .dashboard-card {
-        background-color: white;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin-bottom: 15px;
-        border-left: 5px solid #2B588D; /* Navy Accent */
-        color: black !important;
+        background-color: white; padding: 20px; border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 15px;
+        border-left: 5px solid #2B588D; color: black !important;
     }
-    .card-title {
-        color: #6c757d;
-        font-size: 14px;
-        font-weight: 600;
-        text-transform: uppercase;
-        margin-bottom: 5px;
-    }
-    .card-value {
-        color: #2B588D;
-        font-size: 28px;
-        font-weight: bold;
-        margin: 0;
-    }
-    .card-sub {
-        color: #28a745; /* Green for good news */
-        font-size: 12px;
-        margin-top: 5px;
-    }
-    
-    /* --- NAVIGATION BUTTON GRID (The "App" Menu) --- */
+    .card-title { color: #6c757d; font-size: 14px; font-weight: 600; text-transform: uppercase; margin-bottom: 5px; }
+    .card-value { color: #2B588D; font-size: 28px; font-weight: bold; margin: 0; }
+    .card-sub { color: #28a745; font-size: 12px; margin-top: 5px; }
     .stButton button {
-        width: 100%;
-        height: 80px;
-        border-radius: 12px !important;
+        width: 100%; height: 80px; border-radius: 12px !important;
         border: 1px solid rgba(255,255,255,0.2) !important;
         background-color: rgba(255,255,255,0.1) !important;
-        color: white !important;
-        font-weight: bold;
-        transition: all 0.2s;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 5px;
+        color: white !important; font-weight: bold; transition: all 0.2s;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
     }
-    .stButton button:hover {
-        background-color: #DAA520 !important; /* Gold on hover */
-        border-color: #DAA520 !important;
-        transform: translateY(-2px);
-    }
-    .stButton button:active {
-        background-color: #DAA520 !important;
-    }
-    
-    /* HEADERS & TEXT */
+    .stButton button:hover { background-color: #DAA520 !important; border-color: #DAA520 !important; transform: translateY(-2px); }
     h1, h2, h3 { color: #2B588D !important; font-family: 'Helvetica', sans-serif; }
-    
-    /* HIDE STREAMLIT BRANDING */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -194,6 +146,7 @@ def check_password(password, hashed):
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 def get_referral_stats(my_code):
+    # Calculates discounts earned by REFERRING others
     if not my_code: return 0, 0
     df = run_query("SELECT COUNT(*) FROM users WHERE referred_by=:code AND subscription_status IN ('Active', 'Trial')", params={"code": my_code})
     if not df.empty:
@@ -209,12 +162,9 @@ def parse_currency(value):
     try: return float(clean)
     except: return 0.0
 
-# --- SMART SPELL CHECKER (CONSTRUCTION TUNED) ---
 def run_spell_check(text):
     if not SPELLCHECK_AVAILABLE or not text: return None
-    
     spell = SpellChecker()
-    # Add Construction/Industry Terms to Ignore
     construction_words = [
         'hvac', 'pvc', 'abs', 'rebar', 'drywall', 'sheetrock', 'subfloor', 'joist', 'truss', 
         'framing', 'soffit', 'fascia', 'stucco', 'concrete', 'retrofit', 'excavation', 
@@ -222,40 +172,23 @@ def run_spell_check(text):
         'fixture', 'demolition', 'reno', 'remodel', 'permit', 'subcontractor'
     ]
     spell.word_frequency.load_words(construction_words)
-    
-    # Split and check
     words = spell.split_words(text)
     misspelled = spell.unknown(words)
-    
     suggestions = {}
     for word in misspelled:
         corr = spell.correction(word)
-        if corr and corr != word:
-            suggestions[word] = corr
+        if corr and corr != word: suggestions[word] = corr
     return suggestions
 
-# --- CARD RENDERER FUNCTION ---
 def metric_card(title, value, subtext=""):
-    st.markdown(f"""
-    <div class="dashboard-card">
-        <div class="card-title">{title}</div>
-        <div class="card-value">{value}</div>
-        <div class="card-sub">{subtext}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""<div class="dashboard-card"><div class="card-title">{title}</div><div class="card-value">{value}</div><div class="card-sub">{subtext}</div></div>""", unsafe_allow_html=True)
 
-# --- PDF GENERATORS (Minimally Changed) ---
 class BB_PDF(FPDF):
     def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.set_text_color(180, 180, 180)
-        self.cell(0, 10, BB_WATERMARK, 0, 0, 'C')
+        self.set_y(-15); self.set_font('Arial', 'I', 8); self.set_text_color(180, 180, 180); self.cell(0, 10, BB_WATERMARK, 0, 0, 'C')
 
 def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms):
-    pdf = BB_PDF()
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf = BB_PDF(); pdf.add_page(); pdf.set_auto_page_break(auto=True, margin=20)
     if logo_data:
         try:
             image = Image.open(io.BytesIO(logo_data))
@@ -263,38 +196,25 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
                 image.save(tmp, format="PNG"); tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
+    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
     pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
-    pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
+    pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
     if project_info.get('po_number'): pdf.cell(0, 5, f"PO #: {project_info['po_number']}", ln=1, align='R')
     pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['client_name']}", ln=1)
-    if project_info.get('billing_street'):
-        pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1); pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
-    right_x = 110; current_y = 60; pdf.set_xy(right_x, current_y)
-    pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:"); current_y += 5; pdf.set_xy(right_x, current_y)
+    if project_info.get('billing_street'): pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1); pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
+    right_x = 110; current_y = 60; pdf.set_xy(right_x, current_y); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:"); current_y += 5; pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['name']}")
-    if project_info.get('site_street'):
-        current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{project_info['site_street']}")
-        current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}")
-    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
-    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
-    pdf.ln(10)
-    pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R')
-    pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R')
-    pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
-    if terms: 
-        pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1)
-        pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, terms)
+    if project_info.get('site_street'): current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{project_info['site_street']}"); current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{project_info['site_city']}, {project_info['site_state']} {project_info['site_zip']}")
+    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1); pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, inv_data['description'])
+    pdf.ln(10); pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R'); pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R'); pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
+    if terms: pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1); pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, terms)
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, client_name):
-    pdf = BB_PDF()
-    pdf.add_page()
+    pdf = BB_PDF(); pdf.add_page()
     if logo_data:
         try:
             image = Image.open(io.BytesIO(logo_data))
@@ -302,29 +222,20 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
                 image.save(tmp, format="PNG"); tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
-    pdf.cell(0, 10, "PROJECT STATEMENT", ln=1, align='R')
-    pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0)
-    pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R')
-    pdf.ln(10)
-    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {project_name}", ln=1)
-    pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {client_name}", ln=1)
-    pdf.ln(10)
+    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141); pdf.cell(0, 10, "PROJECT STATEMENT", ln=1, align='R')
+    pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R'); pdf.ln(10)
+    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {project_name}", ln=1); pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {client_name}", ln=1); pdf.ln(10)
     pdf.set_fill_color(43, 88, 141); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 10)
-    pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1)
-    pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1); pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
+    pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1); pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1); pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9); fill = False
     for index, row in ledger_df.iterrows():
         if fill: pdf.set_fill_color(240, 240, 240)
         else: pdf.set_fill_color(255, 255, 255)
-        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill); pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill)
-        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill); pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill)
-        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
+        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill); pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill); pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill); pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill); pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
-    pdf = BB_PDF(); pdf.add_page()
-    pdf.set_fill_color(43, 88, 141); pdf.rect(0, 0, 210, 40, 'F')
+    pdf = BB_PDF(); pdf.add_page(); pdf.set_fill_color(43, 88, 141); pdf.rect(0, 0, 210, 40, 'F')
     if logo_data:
         try:
             image = Image.open(io.BytesIO(logo_data))
@@ -332,14 +243,10 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
                 image.save(tmp, format="PNG"); tmp_path = tmp.name
             pdf.image(tmp_path, 10, 8, 25); os.unlink(tmp_path)
         except: pass
-    pdf.set_xy(40, 10); pdf.set_font("Arial", "B", 20); pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 10, "EXECUTIVE FINANCIAL REPORT", ln=1)
-    pdf.set_xy(40, 20); pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1); pdf.ln(20)
+    pdf.set_xy(40, 10); pdf.set_font("Arial", "B", 20); pdf.set_text_color(255, 255, 255); pdf.cell(0, 10, "EXECUTIVE FINANCIAL REPORT", ln=1); pdf.set_xy(40, 20); pdf.set_font("Arial", size=12); pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1); pdf.ln(20)
     pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, "Key Performance Indicators", ln=1); pdf.ln(2)
     pdf.set_fill_color(218, 165, 32); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 11)
-    pdf.cell(100, 10, "Metric Category", 1, 0, 'L', 1); pdf.cell(60, 10, "Value", 1, 1, 'R', 1)
-    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11); fill = False
+    pdf.cell(100, 10, "Metric Category", 1, 0, 'L', 1); pdf.cell(60, 10, "Value", 1, 1, 'R', 1); pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11); fill = False
     for key, value in metrics.items():
         if fill: pdf.set_fill_color(245, 245, 245)
         else: pdf.set_fill_color(255, 255, 255)
@@ -348,19 +255,13 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
     if chart_data:
         total_rev = chart_data['Invoiced'] + chart_data['Collected'] + chart_data['Outstanding']
         if total_rev > 0:
-            plt.figure(figsize=(6, 4))
-            categories = ['Invoiced', 'Collected', 'Outstanding AR']
-            values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]
-            colors = ['#2B588D', '#28a745', '#DAA520']
-            plt.bar(categories, values, color=colors); plt.title('Revenue Distribution', color='#2B588D'); plt.grid(axis='y', linestyle='--', alpha=0.7)
+            plt.figure(figsize=(6, 4)); categories = ['Invoiced', 'Collected', 'Outstanding AR']; values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]; colors = ['#2B588D', '#28a745', '#DAA520']; plt.bar(categories, values, color=colors); plt.title('Revenue Distribution', color='#2B588D'); plt.grid(axis='y', linestyle='--', alpha=0.7)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart1:
                 plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight'); pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90); os.unlink(tmp_chart1.name)
         else: pdf.set_font("Arial", "I", 10); pdf.text(x=20, y=pdf.get_y() + 20, txt="No financial activity recorded yet.")
         pie_sizes = [chart_data['Invoiced'], chart_data['Remaining']]
         if sum(pie_sizes) > 0:
-            plt.clf(); plt.figure(figsize=(6, 4))
-            labels = ['Invoiced', 'Remaining']
-            plt.pie(pie_sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90); plt.title('Contract Progress', color='#2B588D')
+            plt.clf(); plt.figure(figsize=(6, 4)); labels = ['Invoiced', 'Remaining']; plt.pie(pie_sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90); plt.title('Contract Progress', color='#2B588D')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart2:
                 plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight'); pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90); os.unlink(tmp_chart2.name)
         else: pdf.set_font("Arial", "I", 10); pdf.text(x=130, y=pdf.get_y() + 20, txt="No contracts active.")
@@ -381,6 +282,7 @@ def create_stripe_customer(email, name):
 
 # --- 4. APP LOGIC & NAVIGATION ---
 if 'user_id' not in st.session_state: st.session_state.user_id = None
+if 'username' not in st.session_state: st.session_state.username = ""
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
 
 if st.session_state.user_id is None:
@@ -396,7 +298,7 @@ if st.session_state.user_id is None:
                 if not df.empty:
                     rec = df.iloc[0]
                     if check_password(p, rec['password']):
-                        st.session_state.user_id = int(rec['id']); st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
+                        st.session_state.user_id = int(rec['id']); st.session_state.username = u; st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
                         st.success("Login successful!"); st.rerun()
                     else: st.error("Incorrect password")
                 else: st.error("Username not found")
@@ -404,7 +306,7 @@ if st.session_state.user_id is None:
         st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
         with st.form("signup"):
             u = st.text_input("Username"); p = st.text_input("Password", type="password"); e = st.text_input("Email")
-            ref_input = st.text_input("Referral Code (Got one?)")
+            ref_input = st.text_input("Referral/Affiliate Code (Optional)")
             st.markdown("---"); st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
             terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.", value=False)
             submitted_sign = st.form_submit_button("Create Account")
@@ -426,11 +328,22 @@ if st.session_state.user_id is None:
 
 else:
     user_id = st.session_state.user_id
+    curr_username = st.session_state.username
+    
     # Reload Context
-    df_user = run_query("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id", params={"id": user_id})
+    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty: st.session_state.clear(); st.rerun()
-    status, created_at_str, my_code = df_user.iloc[0]['subscription_status'], df_user.iloc[0]['created_at'], df_user.iloc[0]['referral_code']
-    active_referrals, discount_percent = get_referral_stats(my_code)
+    row = df_user.iloc[0]
+    status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
+    
+    # --- PRICING LOGIC UPDATE ---
+    # 1. Discount for referring others
+    active_referrals, discount_percent_earned = get_referral_stats(my_code)
+    # 2. Discount for being referred (Affiliate Discount)
+    discount_from_affiliate = 10 if referred_by else 0
+    # 3. Total Discount
+    total_discount = min(discount_percent_earned + discount_from_affiliate, 100)
+    
     days_left = 0; trial_active = False
     if status == 'Trial' and created_at_str:
         try:
@@ -439,16 +352,22 @@ else:
             if days_left > 0: trial_active = True
         except: pass
     
-    if status != 'Active' and not trial_active:
-        if discount_percent >= 100:
-            st.balloons(); st.success("🎉 You have earned FREE ACCESS with 10+ Referrals!")
+    # --- ADMIN / AFFILIATE REDIRECT ---
+    if status == 'Affiliate':
+        st.warning("⚠️ This is an Affiliate Account. Access restricted to API tracking only.")
+        if st.button("Logout"): st.session_state.clear(); st.rerun()
+        st.stop()
+
+    if status != 'Active' and not trial_active and curr_username != ADMIN_USERNAME:
+        if total_discount >= 100:
+            st.balloons(); st.success("🎉 You have earned FREE ACCESS via Referrals!")
             if st.button("Activate Free Lifetime Access"):
                 execute_statement("UPDATE users SET subscription_status='Active' WHERE id=:id", params={"id": user_id})
                 st.session_state.sub_status = 'Active'; st.rerun()
         else:
-            st.warning(f"⚠️ Trial Expired. You have {active_referrals} Active Referrals ({discount_percent}% Discount).")
+            st.warning(f"⚠️ Trial Expired. Current Discount: {total_discount}%")
             if st.session_state.stripe_cid:
-                url, err = create_checkout_session(st.session_state.stripe_cid, discount_percent)
+                url, err = create_checkout_session(st.session_state.stripe_cid, total_discount)
                 if url: st.link_button("Subscribe Now", url)
             if st.button("Logout"): st.session_state.clear(); st.rerun()
             st.stop()
@@ -458,9 +377,9 @@ else:
     logo, c_name, c_addr, terms = u_data['logo_data'], u_data['company_name'], u_data['company_address'], u_data['terms_conditions']
     if isinstance(logo, memoryview): logo = logo.tobytes()
 
-    if trial_active: st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Active Referrals: {active_referrals} ({discount_percent}% OFF)")
+    if trial_active and curr_username != ADMIN_USERNAME: st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Total Discount: {total_discount}%")
 
-    # --- CUSTOM SIDEBAR NAVIGATION (APP STYLE) ---
+    # --- SIDEBAR NAVIGATION ---
     with st.sidebar:
         if logo: st.image(logo, width=120)
         else: st.header("Menu")
@@ -468,21 +387,69 @@ else:
         # NAVIGATION GRID
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("📊\nDash", use_container_width=True): st.session_state.page = "Dashboard"
-            if st.button("📝\nInvoice", use_container_width=True): st.session_state.page = "Invoices"
-            if st.button("⚙️\nSettings", use_container_width=True): st.session_state.page = "Settings"
+            if curr_username == ADMIN_USERNAME:
+                if st.button("👥\nAdmin", use_container_width=True): st.session_state.page = "Affiliate Manager"
+            else:
+                if st.button("📊\nDash", use_container_width=True): st.session_state.page = "Dashboard"
+                if st.button("📝\nInvoice", use_container_width=True): st.session_state.page = "Invoices"
+                if st.button("⚙️\nSettings", use_container_width=True): st.session_state.page = "Settings"
         with col2:
-            if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
-            if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
-            if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
+            if curr_username == ADMIN_USERNAME:
+                 if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
+            else:
+                if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
+                if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
+                if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
         
         st.markdown("---")
-        st.caption(f"Ver: 1.0 | User: {user_id}")
+        st.caption(f"Ver: 1.0 | User: {curr_username}")
 
     # --- PAGE ROUTING ---
     page = st.session_state.page
     
-    if page == "Dashboard":
+    # --- ADMIN PAGE ---
+    if curr_username == ADMIN_USERNAME and page == "Affiliate Manager":
+        st.title("👥 Affiliate Manager")
+        st.markdown("### Create New Affiliate")
+        with st.form("new_affiliate"):
+            aff_name = st.text_input("Affiliate Name (Internal ID)")
+            aff_code = st.text_input("Custom Referral Code (e.g., INFLUENCER20)")
+            submitted_aff = st.form_submit_button("Generate Code")
+            if submitted_aff:
+                # Create a "Ghost" user
+                fake_email = f"{aff_name.lower().replace(' ', '')}@affiliate.com"
+                fake_pass = hash_password("affiliate_dummy_pass")
+                try:
+                    execute_statement("""
+                        INSERT INTO users (username, password, email, referral_code, subscription_status) 
+                        VALUES (:u, :p, :e, :rc, 'Affiliate')
+                    """, params={"u": aff_name, "p": fake_pass, "e": fake_email, "rc": aff_code})
+                    st.success(f"Affiliate Created: Code **{aff_code}** is live!")
+                except Exception as e: st.error(f"Error (Code likely taken): {e}")
+
+        st.markdown("---")
+        st.markdown("### Commission Report")
+        # Get all affiliates and count their active referrals
+        affiliates = run_query("SELECT username, referral_code FROM users WHERE subscription_status='Affiliate'")
+        if not affiliates.empty:
+            report_data = []
+            for _, aff in affiliates.iterrows():
+                code = aff['referral_code']
+                # Count Active users referred by this code
+                count_res = run_query("SELECT COUNT(*) FROM users WHERE referred_by=:c AND subscription_status IN ('Active', 'Trial')", params={"c": code})
+                active_refs = count_res.iloc[0, 0] if not count_res.empty else 0
+                commission = active_refs * AFFILIATE_COMMISSION_PER_USER
+                report_data.append({
+                    "Affiliate": aff['username'],
+                    "Code": code,
+                    "Active Referrals": active_refs,
+                    "Commission Due (Monthly)": f"${commission:,.2f}"
+                })
+            st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+        else:
+            st.info("No affiliates created yet.")
+
+    elif page == "Dashboard":
         st.title("Financial Overview")
         st.caption(f"Welcome back, {c_name or 'Admin'}")
         
@@ -682,8 +649,11 @@ else:
 
     elif page == "Settings":
         st.header("Settings")
-        st.markdown(f"""<div class="referral-box"><h3>🚀 Refer & Earn</h3><p>Share code: <b>{my_code}</b></p><p>Active Referrals: <b>{active_referrals}</b> | Discount: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
-        st.progress(min(discount_percent, 100) / 100)
+        st.markdown(f"""<div class="referral-box"><h3>🚀 Refer & Earn</h3><p>Share code: <b>{my_code}</b></p><p>Active Referrals: <b>{active_referrals}</b> | Discount Earned: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
+        if referred_by:
+             st.success(f"✅ You are receiving a 10% Discount for being referred by: {referred_by}")
+        st.info(f"Total Current Discount: {total_discount}%")
+        st.progress(min(total_discount, 100) / 100)
         with st.form("set"):
             cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Update Logo")
             submitted_set = st.form_submit_button("Save Profile")
