@@ -556,6 +556,25 @@ else:
             if "pdf" in st.session_state:
                 fname = st.session_state.get("inv_filename", "invoice.pdf")
                 st.download_button("Download PDF", st.session_state.pdf, fname, "application/pdf")
+            
+            # --- NEW: INVOICE HISTORY & REPRINT SECTION ---
+            st.markdown("---")
+            st.subheader("📜 Invoice History & Reprint")
+            hist_inv = run_query("SELECT invoice_num, issue_date, amount, tax, description FROM invoices WHERE project_id=:pid ORDER BY invoice_num DESC", {"pid": int(row['id'])})
+            if not hist_inv.empty:
+                st.dataframe(hist_inv[['invoice_num', 'issue_date', 'amount', 'description']], use_container_width=True)
+                c_rep1, c_rep2 = st.columns([3, 2])
+                with c_rep1:
+                    inv_to_print = st.selectbox("Select Invoice to Reprint", hist_inv['invoice_num'], key="reprint_sel")
+                with c_rep2:
+                    st.write(""); st.write("")
+                    if inv_to_print:
+                        rec = hist_inv[hist_inv['invoice_num'] == inv_to_print].iloc[0]
+                        p_info_rep = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
+                        pdf_rep = generate_pdf_invoice({'number': rec['invoice_num'], 'amount': rec['amount'], 'tax': rec['tax'], 'date': str(rec['issue_date']), 'description': rec['description']}, logo, {'name': c_name, 'address': c_addr}, p_info_rep, terms)
+                        st.download_button(label=f"📥 Download PDF #{inv_to_print}", data=pdf_rep, file_name=f"Invoice_{rec['invoice_num']}_{row['client_name']}.pdf", mime="application/pdf")
+            else:
+                st.info("No past invoices for this project.")
 
     elif page == "Payments":
         st.subheader("Log Payment")
