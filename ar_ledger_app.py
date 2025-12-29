@@ -38,8 +38,8 @@ st.set_page_config(
 )
 
 # --- ADMIN CONFIGURATION ---
-ADMIN_USERNAME = "admin" # CHANGE THIS to whatever username you want to use for the admin account
-AFFILIATE_COMMISSION_PER_USER = 10.00 # $10 per active user
+ADMIN_USERNAME = "admin" # This must be lowercase
+AFFILIATE_COMMISSION_PER_USER = 10.00 
 
 # --- CUSTOM CSS ---
 st.markdown("""
@@ -146,7 +146,6 @@ def check_password(password, hashed):
     return bcrypt.checkpw(password.encode(), hashed.encode())
 
 def get_referral_stats(my_code):
-    # Calculates discounts earned by REFERRING others
     if not my_code: return 0, 0
     df = run_query("SELECT COUNT(*) FROM users WHERE referred_by=:code AND subscription_status IN ('Active', 'Trial')", params={"code": my_code})
     if not df.empty:
@@ -291,7 +290,9 @@ if st.session_state.user_id is None:
     tab1, tab2 = st.tabs(["Login", "Signup"])
     with tab1:
         with st.form("login_form"):
-            u = st.text_input("Username"); p = st.text_input("Password", type="password")
+            # CASE SENSITIVITY FIX
+            u = st.text_input("Username").lower().strip()
+            p = st.text_input("Password", type="password")
             submitted = st.form_submit_button("Login")
             if submitted:
                 df = run_query("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
@@ -305,7 +306,9 @@ if st.session_state.user_id is None:
     with tab2:
         st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
         with st.form("signup"):
-            u = st.text_input("Username"); p = st.text_input("Password", type="password"); e = st.text_input("Email")
+            # CASE SENSITIVITY FIX
+            u = st.text_input("Username").lower().strip()
+            p = st.text_input("Password", type="password"); e = st.text_input("Email")
             ref_input = st.text_input("Referral/Affiliate Code (Optional)")
             st.markdown("---"); st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
             terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.", value=False)
@@ -337,11 +340,8 @@ else:
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
     
     # --- PRICING LOGIC UPDATE ---
-    # 1. Discount for referring others
     active_referrals, discount_percent_earned = get_referral_stats(my_code)
-    # 2. Discount for being referred (Affiliate Discount)
     discount_from_affiliate = 10 if referred_by else 0
-    # 3. Total Discount
     total_discount = min(discount_percent_earned + discount_from_affiliate, 100)
     
     days_left = 0; trial_active = False
@@ -352,7 +352,6 @@ else:
             if days_left > 0: trial_active = True
         except: pass
     
-    # --- ADMIN / AFFILIATE REDIRECT ---
     if status == 'Affiliate':
         st.warning("⚠️ This is an Affiliate Account. Access restricted to API tracking only.")
         if st.button("Logout"): st.session_state.clear(); st.rerun()
@@ -379,12 +378,9 @@ else:
 
     if trial_active and curr_username != ADMIN_USERNAME: st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Total Discount: {total_discount}%")
 
-    # --- SIDEBAR NAVIGATION ---
     with st.sidebar:
         if logo: st.image(logo, width=120)
         else: st.header("Menu")
-        
-        # NAVIGATION GRID
         col1, col2 = st.columns(2)
         with col1:
             if curr_username == ADMIN_USERNAME:
@@ -400,144 +396,94 @@ else:
                 if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
                 if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
                 if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
-        
-        st.markdown("---")
-        st.caption(f"Ver: 1.0 | User: {curr_username}")
+        st.markdown("---"); st.caption(f"Ver: 1.0 | User: {curr_username}")
 
-    # --- PAGE ROUTING ---
     page = st.session_state.page
     
-    # --- ADMIN PAGE ---
     if curr_username == ADMIN_USERNAME and page == "Affiliate Manager":
         st.title("👥 Affiliate Manager")
         st.markdown("### Create New Affiliate")
         with st.form("new_affiliate"):
+            # CASE SENSITIVITY FIX
             aff_name = st.text_input("Affiliate Name (Internal ID)")
             aff_code = st.text_input("Custom Referral Code (e.g., INFLUENCER20)")
             submitted_aff = st.form_submit_button("Generate Code")
             if submitted_aff:
-                # Create a "Ghost" user
-                fake_email = f"{aff_name.lower().replace(' ', '')}@affiliate.com"
+                aff_name_clean = aff_name.lower().strip()
+                fake_email = f"{aff_name_clean.replace(' ', '')}@affiliate.com"
                 fake_pass = hash_password("affiliate_dummy_pass")
                 try:
-                    execute_statement("""
-                        INSERT INTO users (username, password, email, referral_code, subscription_status) 
-                        VALUES (:u, :p, :e, :rc, 'Affiliate')
-                    """, params={"u": aff_name, "p": fake_pass, "e": fake_email, "rc": aff_code})
+                    execute_statement("INSERT INTO users (username, password, email, referral_code, subscription_status) VALUES (:u, :p, :e, :rc, 'Affiliate')", params={"u": aff_name_clean, "p": fake_pass, "e": fake_email, "rc": aff_code})
                     st.success(f"Affiliate Created: Code **{aff_code}** is live!")
                 except Exception as e: st.error(f"Error (Code likely taken): {e}")
-
-        st.markdown("---")
-        st.markdown("### Commission Report")
-        # Get all affiliates and count their active referrals
+        st.markdown("---"); st.markdown("### Commission Report")
         affiliates = run_query("SELECT username, referral_code FROM users WHERE subscription_status='Affiliate'")
         if not affiliates.empty:
             report_data = []
             for _, aff in affiliates.iterrows():
                 code = aff['referral_code']
-                # Count Active users referred by this code
                 count_res = run_query("SELECT COUNT(*) FROM users WHERE referred_by=:c AND subscription_status IN ('Active', 'Trial')", params={"c": code})
                 active_refs = count_res.iloc[0, 0] if not count_res.empty else 0
                 commission = active_refs * AFFILIATE_COMMISSION_PER_USER
-                report_data.append({
-                    "Affiliate": aff['username'],
-                    "Code": code,
-                    "Active Referrals": active_refs,
-                    "Commission Due (Monthly)": f"${commission:,.2f}"
-                })
+                report_data.append({"Affiliate": aff['username'], "Code": code, "Active Referrals": active_refs, "Commission Due (Monthly)": f"${commission:,.2f}"})
             st.dataframe(pd.DataFrame(report_data), use_container_width=True)
-        else:
-            st.info("No affiliates created yet.")
+        else: st.info("No affiliates created yet.")
 
     elif page == "Dashboard":
         st.title("Financial Overview")
         st.caption(f"Welcome back, {c_name or 'Admin'}")
-        
         def get_scalar(q, p):
             res = run_query(q, p)
             return res.iloc[0, 0] if not res.empty and res.iloc[0, 0] is not None else 0.0
-
         t_contracts = get_scalar("SELECT SUM(quoted_price) FROM projects WHERE user_id=:id", {"id": user_id})
         t_invoiced = get_scalar("SELECT SUM(amount) FROM invoices WHERE user_id=:id", {"id": user_id})
         t_collected = get_scalar("SELECT SUM(amount) FROM payments WHERE user_id=:id", {"id": user_id})
-        remaining_to_invoice = t_contracts - t_invoiced
-        outstanding_ar = t_invoiced - t_collected
-        
-        # --- PRO DASHBOARD CARDS (GRID LAYOUT) ---
+        remaining_to_invoice = t_contracts - t_invoiced; outstanding_ar = t_invoiced - t_collected
         c1, c2 = st.columns(2)
-        with c1:
-            metric_card("Total Contracts", f"${t_contracts:,.2f}", "Total Booked Work")
-            metric_card("Total Collected", f"${t_collected:,.2f}", "Cash in Bank")
-        with c2:
-            metric_card("Total Invoiced", f"${t_invoiced:,.2f}", f"Remaining: ${remaining_to_invoice:,.2f}")
-            metric_card("Outstanding AR", f"${outstanding_ar:,.2f}", "Unpaid Invoices")
-        
-        # Chart Data
-        chart_data_pdf = {
-            'Invoiced': t_invoiced,
-            'Collected': t_collected,
-            'Outstanding': outstanding_ar,
-            'Remaining': remaining_to_invoice
-        }
-        
-        # PDF Export
+        with c1: metric_card("Total Contracts", f"${t_contracts:,.2f}", "Total Booked Work"); metric_card("Total Collected", f"${t_collected:,.2f}", "Cash in Bank")
+        with c2: metric_card("Total Invoiced", f"${t_invoiced:,.2f}", f"Remaining: ${remaining_to_invoice:,.2f}"); metric_card("Outstanding AR", f"${outstanding_ar:,.2f}", "Unpaid Invoices")
+        chart_data_pdf = {'Invoiced': t_invoiced, 'Collected': t_collected, 'Outstanding': outstanding_ar, 'Remaining': remaining_to_invoice}
         dash_metrics = {"Total Contracts": f"${t_contracts:,.2f}", "Total Invoiced": f"${t_invoiced:,.2f}", "Total Collected": f"${t_collected:,.2f}", "Remaining to Invoice": f"${remaining_to_invoice:,.2f}", "Outstanding AR": f"${outstanding_ar:,.2f}"}
         pdf_bytes = generate_dashboard_pdf(dash_metrics, c_name or "My Firm", logo, chart_data_pdf)
         st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, f"Executive_Report_{datetime.date.today()}.pdf", "application/pdf")
-        
-        # Visuals
         st.markdown("### Analysis")
         vc1, vc2 = st.columns(2)
         with vc1:
             st.markdown("##### Revenue Breakdown")
             chart_data = pd.DataFrame({'Category': ['Invoiced', 'Collected', 'Outstanding AR'], 'Amount': [t_invoiced, t_collected, outstanding_ar]})
-            c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=250)
-            st.altair_chart(c, use_container_width=True)
+            c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=250); st.altair_chart(c, use_container_width=True)
         with vc2:
             st.markdown("##### Contract Progress")
             pie_data = pd.DataFrame({'Status': ['Invoiced', 'Remaining'], 'Value': [t_invoiced, remaining_to_invoice]})
-            base = alt.Chart(pie_data).encode(theta=alt.Theta("Value", stack=True))
-            pie = base.mark_arc(innerRadius=50).encode(color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])), tooltip=["Status", "Value"]).properties(height=250)
-            st.altair_chart(pie, use_container_width=True)
-
+            base = alt.Chart(pie_data).encode(theta=alt.Theta("Value", stack=True)); pie = base.mark_arc(innerRadius=50).encode(color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])), tooltip=["Status", "Value"]).properties(height=250); st.altair_chart(pie, use_container_width=True)
         st.markdown("---"); st.subheader("🔍 Project Deep-Dive")
         projs = run_query("SELECT id, name, client_name FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
             p_choice = st.selectbox("Select Project", projs['name'])
             p_id = int(projs[projs['name'] == p_choice]['id'].values[0])
             client_name = projs[projs['name'] == p_choice]['client_name'].values[0]
-            
             p_row = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
             p_quoted = p_row['quoted_price'] or 0.0
-            
             df_inv = run_query("SELECT issue_date, invoice_num, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
             df_pay = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
-            
             ledger = []
             for _, r in df_inv.iterrows(): ledger.append({'Date': r['issue_date'], 'Details': f"Invoice #{r['invoice_num']}", 'Charge': r['amount'], 'Payment': 0, 'Type': 'Inv'})
             for _, r in df_pay.iterrows(): ledger.append({'Date': r['payment_date'], 'Details': f"Payment ({r['notes']})", 'Charge': 0, 'Payment': r['amount'], 'Type': 'Pay'})
-            
             df_ledger = pd.DataFrame(ledger)
-            
             if not df_ledger.empty:
                 df_ledger['Date'] = pd.to_datetime(df_ledger['Date'])
                 df_ledger = df_ledger.sort_values(by='Date').reset_index(drop=True)
                 df_ledger['Balance'] = (df_ledger['Charge'] - df_ledger['Payment']).cumsum()
                 df_ledger['Date'] = df_ledger['Date'].dt.date
-                
                 tot_bill = df_ledger['Charge'].sum(); tot_paid = df_ledger['Payment'].sum(); curr_bal = tot_bill - tot_paid
-                
-                # Project Specific Cards
                 pc1, pc2 = st.columns(2)
                 with pc1: metric_card("Project Value", f"${p_quoted:,.2f}")
                 with pc2: metric_card("Current Balance", f"${curr_bal:,.2f}", "Outstanding")
-
                 st.markdown("### Ledger History")
                 col_pdf, col_tbl = st.columns([1,3])
                 with col_pdf:
                     pdf_bytes = generate_statement_pdf(df_ledger, logo, {"name": c_name, "address": c_addr}, p_choice, client_name)
                     st.download_button("📄 Download Statement", pdf_bytes, f"statement_{p_choice}.pdf", "application/pdf")
-                
                 st.dataframe(df_ledger[['Date', 'Details', 'Charge', 'Payment', 'Balance']].style.format("{:.2f}", subset=['Charge', 'Payment', 'Balance']), use_container_width=True)
             else: st.info("No transactions yet.")
         else: st.info("No projects found.")
@@ -549,20 +495,16 @@ else:
                 c1, c2 = st.columns(2)
                 n = c1.text_input("Project Name"); c = c2.text_input("Client Name")
                 q_str = c1.text_input("Quoted Price ($)", placeholder="0.00"); dur = c2.number_input("Duration (Days)", min_value=1)
-                st.markdown("##### Addresses")
-                ac1, ac2 = st.columns(2)
+                st.markdown("##### Addresses"); ac1, ac2 = st.columns(2)
                 with ac1: b_street = st.text_input("Billing Street"); b_city = st.text_input("Billing City"); b_state = st.text_input("Billing State"); b_zip = st.text_input("Billing Zip")
                 with ac2: s_street = st.text_input("Site Street"); s_city = st.text_input("Site City"); s_state = st.text_input("Site State"); s_zip = st.text_input("Site Zip")
-                st.markdown("##### Details")
-                start_d = c1.date_input("Start Date"); po = c2.text_input("PO Number")
-                status = c1.selectbox("Status", ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"])
-                is_tax_exempt = c2.checkbox("Tax Exempt?"); scope = st.text_area("Scope")
+                st.markdown("##### Details"); start_d = c1.date_input("Start Date"); po = c2.text_input("PO Number")
+                status = c1.selectbox("Status", ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"]); is_tax_exempt = c2.checkbox("Tax Exempt?"); scope = st.text_area("Scope")
                 submitted = st.form_submit_button("Create Project")
                 if submitted:
                     q = parse_currency(q_str)
                     execute_statement("INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)", params={"uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, "bs": b_street, "bc": b_city, "bst": b_state, "bz": b_zip, "ss": s_street, "sc": s_city, "sst": s_state, "sz": s_zip, "ite": 1 if is_tax_exempt else 0, "po": po, "stat": status, "scope": scope})
                     st.success("Project Saved"); st.rerun()
-        
         st.markdown("### Active Projects")
         projs = run_query("SELECT id, name, client_name, status, quoted_price FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
@@ -572,14 +514,12 @@ else:
                 new_stat = st.selectbox("New Status", ["Bidding", "Pre-Construction", "Course of Construction", "Warranty", "Post-Construction"], key="new_stat")
                 if st.button("Update Status"):
                     pid = int(projs[projs['name'] == p_update]['id'].values[0])
-                    execute_statement("UPDATE projects SET status=:s WHERE id=:id", {"s": new_stat, "id": pid})
-                    st.success("Updated"); st.rerun()
+                    execute_statement("UPDATE projects SET status=:s WHERE id=:id", {"s": new_stat, "id": pid}); st.success("Updated"); st.rerun()
             with c_man_2:
                 p_del = st.selectbox("Delete Project", projs['name'], key="del_sel")
                 if st.button("Delete", type="primary"):
                     pid = int(projs[projs['name'] == p_del]['id'].values[0])
-                    execute_statement("DELETE FROM projects WHERE id=:id", {"id": pid}); execute_statement("DELETE FROM invoices WHERE project_id=:id", {"id": pid}); execute_statement("DELETE FROM payments WHERE project_id=:id", {"id": pid})
-                    st.warning("Deleted"); st.rerun()
+                    execute_statement("DELETE FROM projects WHERE id=:id", {"id": pid}); execute_statement("DELETE FROM invoices WHERE project_id=:id", {"id": pid}); execute_statement("DELETE FROM payments WHERE project_id=:id", {"id": pid}); st.warning("Deleted"); st.rerun()
             st.dataframe(projs, use_container_width=True)
         else: st.info("No active projects.")
 
@@ -587,29 +527,20 @@ else:
         st.subheader("Create Invoice")
         projs = run_query("SELECT * FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
-            p = st.selectbox("Project", projs['name'])
-            row = projs[projs['name']==p].iloc[0]
+            p = st.selectbox("Project", projs['name']); row = projs[projs['name']==p].iloc[0]
             tax_label = "Tax ($)" + (" - [EXEMPT]" if row['is_tax_exempt'] else "")
-            
             with st.form("inv", clear_on_submit=True):
-                st.warning(f"Billing: **{row['name']}**")
-                inv_date = st.date_input("Date", value=datetime.date.today())
+                st.warning(f"Billing: **{row['name']}**"); inv_date = st.date_input("Date", value=datetime.date.today())
                 a_str = st.text_input("Amount ($)", placeholder="0.00"); t_str = st.text_input(tax_label, placeholder="0.00"); d = st.text_area("Description")
-                
-                # --- SPELL CHECK TRIGGER ---
                 check_spelling = st.form_submit_button("✨ Check Spelling First")
                 if check_spelling:
-                    if not SPELLCHECK_AVAILABLE:
-                        st.warning("⚠️ Spellchecker library missing. Please add 'pyspellchecker' to requirements.txt")
+                    if not SPELLCHECK_AVAILABLE: st.warning("⚠️ Spellchecker library missing. Please add 'pyspellchecker' to requirements.txt")
                     else:
                         corrections = run_spell_check(d)
                         if corrections:
                             st.info("💡 Found possible typos:")
-                            for wrong, right in corrections.items():
-                                st.write(f"- **{wrong}** → _{right}_")
-                        else:
-                            st.success("✅ No typos found!")
-
+                            for wrong, right in corrections.items(): st.write(f"- **{wrong}** → _{right}_")
+                        else: st.success("✅ No typos found!")
                 verified = st.checkbox("I verify billing is correct"); submitted = st.form_submit_button("Generate Invoice")
                 if submitted:
                     if verified:
@@ -620,8 +551,7 @@ else:
                         p_info = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
                         pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
                         st.session_state.pdf = pdf; file_name = f"{row['client_name']}_Invoice#{num}_{inv_date}.pdf"; st.session_state.inv_filename = file_name
-                        execute_statement("INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)", {"uid": user_id, "pid": int(row['id']), "num": int(num), "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
-                        st.success(f"Invoice #{num} Generated")
+                        execute_statement("INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)", {"uid": user_id, "pid": int(row['id']), "num": int(num), "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t}); st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
             if "pdf" in st.session_state:
                 fname = st.session_state.get("inv_filename", "invoice.pdf")
@@ -631,17 +561,14 @@ else:
         st.subheader("Log Payment")
         projs = run_query("SELECT * FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
-            p = st.selectbox("Project", projs['name'])
-            row = projs[projs['name']==p].iloc[0]
+            p = st.selectbox("Project", projs['name']); row = projs[projs['name']==p].iloc[0]
             with st.form("pay_form", clear_on_submit=True):
-                amt_str = st.text_input("Amount Received ($)", placeholder="0.00")
-                pay_date = st.date_input("Date"); notes = st.text_input("Notes (Check #)")
+                amt_str = st.text_input("Amount Received ($)", placeholder="0.00"); pay_date = st.date_input("Date"); notes = st.text_input("Notes (Check #)")
                 verified_pay = st.checkbox("Confirm Payment"); submitted_pay = st.form_submit_button("Log Payment")
                 if submitted_pay:
                     if verified_pay:
                         amt = parse_currency(amt_str)
-                        execute_statement("INSERT INTO payments (user_id, project_id, amount, payment_date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
-                        st.success("Payment Logged")
+                        execute_statement("INSERT INTO payments (user_id, project_id, amount, payment_date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes}); st.success("Payment Logged")
                     else: st.error("Please verify.")
             st.markdown("### Payment History")
             hist = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": int(row['id'])})
@@ -650,17 +577,12 @@ else:
     elif page == "Settings":
         st.header("Settings")
         st.markdown(f"""<div class="referral-box"><h3>🚀 Refer & Earn</h3><p>Share code: <b>{my_code}</b></p><p>Active Referrals: <b>{active_referrals}</b> | Discount Earned: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
-        if referred_by:
-             st.success(f"✅ You are receiving a 10% Discount for being referred by: {referred_by}")
-        st.info(f"Total Current Discount: {total_discount}%")
-        st.progress(min(total_discount, 100) / 100)
+        if referred_by: st.success(f"✅ You are receiving a 10% Discount for being referred by: {referred_by}")
+        st.info(f"Total Current Discount: {total_discount}%"); st.progress(min(total_discount, 100) / 100)
         with st.form("set"):
             cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Update Logo")
             submitted_set = st.form_submit_button("Save Profile")
             if submitted_set:
-                if l:
-                    lb = l.read()
-                    execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
-                else:
-                    execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
+                if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
+                else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
