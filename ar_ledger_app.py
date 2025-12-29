@@ -17,11 +17,26 @@ from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
+# TRY TO IMPORT SPELLCHECKER
+try:
+    from spellchecker import SpellChecker
+    SPELLCHECK_AVAILABLE = True
+except ImportError:
+    SPELLCHECK_AVAILABLE = False
+
 # Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
-st.set_page_config(page_title="ProgressBill Pro", layout="wide", initial_sidebar_state="expanded")
+# We try to load the favicon file if it exists
+fav_icon = "favicon.png" if os.path.exists("favicon.png") else None
+
+st.set_page_config(
+    page_title="ProgressBill Pro", 
+    page_icon=fav_icon, 
+    layout="wide", 
+    initial_sidebar_state="expanded"
+)
 
 # --- CUSTOM CSS FOR "PRO" LOOK ---
 st.markdown("""
@@ -69,7 +84,6 @@ st.markdown("""
     }
     
     /* --- NAVIGATION BUTTON GRID (The "App" Menu) --- */
-    /* We style standard buttons to look like App Icons */
     .stButton button {
         width: 100%;
         height: 80px;
@@ -194,6 +208,31 @@ def parse_currency(value):
     clean = str(value).replace('$', '').replace(',', '').strip()
     try: return float(clean)
     except: return 0.0
+
+# --- SMART SPELL CHECKER (CONSTRUCTION TUNED) ---
+def run_spell_check(text):
+    if not SPELLCHECK_AVAILABLE or not text: return None
+    
+    spell = SpellChecker()
+    # Add Construction/Industry Terms to Ignore
+    construction_words = [
+        'hvac', 'pvc', 'abs', 'rebar', 'drywall', 'sheetrock', 'subfloor', 'joist', 'truss', 
+        'framing', 'soffit', 'fascia', 'stucco', 'concrete', 'retrofit', 'excavation', 
+        'backfill', 'rough-in', 'caulking', 'grout', 'galvanized', 'breaker', 'conduit',
+        'fixture', 'demolition', 'reno', 'remodel', 'permit', 'subcontractor'
+    ]
+    spell.word_frequency.load_words(construction_words)
+    
+    # Split and check
+    words = spell.split_words(text)
+    misspelled = spell.unknown(words)
+    
+    suggestions = {}
+    for word in misspelled:
+        corr = spell.correction(word)
+        if corr and corr != word:
+            suggestions[word] = corr
+    return suggestions
 
 # --- CARD RENDERER FUNCTION ---
 def metric_card(title, value, subtext=""):
@@ -345,7 +384,7 @@ if 'user_id' not in st.session_state: st.session_state.user_id = None
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
 
 if st.session_state.user_id is None:
-    if os.path.exists("bb_logo.png"): st.image("bb_logo.png", width=200)
+    if os.path.exists("BB_logo.png"): st.image("BB_logo.png", width=200)
     else: st.title("ProgressBill Pro"); st.caption("Powered by Balance & Build Consulting")
     tab1, tab2 = st.tabs(["Login", "Signup"])
     with tab1:
@@ -589,6 +628,21 @@ else:
                 st.warning(f"Billing: **{row['name']}**")
                 inv_date = st.date_input("Date", value=datetime.date.today())
                 a_str = st.text_input("Amount ($)", placeholder="0.00"); t_str = st.text_input(tax_label, placeholder="0.00"); d = st.text_area("Description")
+                
+                # --- SPELL CHECK TRIGGER ---
+                check_spelling = st.form_submit_button("✨ Check Spelling First")
+                if check_spelling:
+                    if not SPELLCHECK_AVAILABLE:
+                        st.warning("⚠️ Spellchecker library missing. Please add 'pyspellchecker' to requirements.txt")
+                    else:
+                        corrections = run_spell_check(d)
+                        if corrections:
+                            st.info("💡 Found possible typos:")
+                            for wrong, right in corrections.items():
+                                st.write(f"- **{wrong}** → _{right}_")
+                        else:
+                            st.success("✅ No typos found!")
+
                 verified = st.checkbox("I verify billing is correct"); submitted = st.form_submit_button("Generate Invoice")
                 if submitted:
                     if verified:
