@@ -21,14 +21,14 @@ from sqlalchemy.pool import NullPool
 matplotlib.use('Agg')
 
 # --- 1. CONFIGURATION & BRANDING ---
-st.set_page_config(page_title="ProgressBill Pro", layout="wide")
+st.set_page_config(page_title="ProgressBill Pro", layout="wide", initial_sidebar_state="expanded")
 
+# --- CUSTOM CSS FOR "PRO" LOOK ---
 st.markdown("""
     <style>
-    /* --- MAIN APP STYLING --- */
+    /* GLOBAL RESET */
     .stApp { 
         background-color: #f4f6f9;
-        /* FORCE TEXT TO BLACK so Night Mode doesn't make it white-on-white */
         color: #000000 !important; 
     }
     
@@ -36,49 +36,68 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: #2B588D; }
     [data-testid="stSidebar"] * { color: white !important; }
     
-    /* METRIC CARDS */
-    div[data-testid="metric-container"] {
-        background-color: white; padding: 20px; border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 6px solid #DAA520; text-align: center;
-        color: black; /* Force text black inside cards */
+    /* HIDE DEFAULT RADIO BUTTONS IF USED */
+    div.row-widget.stRadio > div { flex-direction: row; }
+    
+    /* --- DASHBOARD CARDS (The "Pro" Look) --- */
+    .dashboard-card {
+        background-color: white;
+        padding: 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 15px;
+        border-left: 5px solid #2B588D; /* Navy Accent */
+        color: black !important;
+    }
+    .card-title {
+        color: #6c757d;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+    }
+    .card-value {
+        color: #2B588D;
+        font-size: 28px;
+        font-weight: bold;
+        margin: 0;
+    }
+    .card-sub {
+        color: #28a745; /* Green for good news */
+        font-size: 12px;
+        margin-top: 5px;
     }
     
-    /* HEADERS */
+    /* --- NAVIGATION BUTTON GRID (The "App" Menu) --- */
+    /* We style standard buttons to look like App Icons */
+    .stButton button {
+        width: 100%;
+        height: 80px;
+        border-radius: 12px !important;
+        border: 1px solid rgba(255,255,255,0.2) !important;
+        background-color: rgba(255,255,255,0.1) !important;
+        color: white !important;
+        font-weight: bold;
+        transition: all 0.2s;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+    }
+    .stButton button:hover {
+        background-color: #DAA520 !important; /* Gold on hover */
+        border-color: #DAA520 !important;
+        transform: translateY(-2px);
+    }
+    .stButton button:active {
+        background-color: #DAA520 !important;
+    }
+    
+    /* HEADERS & TEXT */
     h1, h2, h3 { color: #2B588D !important; font-family: 'Helvetica', sans-serif; }
     
-    /* BUTTONS */
-    .stButton>button {
-        background-color: #2B588D; color: white; border: 1px solid #DAA520; border-radius: 5px;
-        transition: all 0.3s ease;
-    }
-    .stButton>button:hover {
-        background-color: #DAA520; color: white; border-color: #2B588D;
-    }
-    
-    /* REFERRAL BOX */
-    .referral-box {
-        padding: 20px; background-color: #eef2f5; border-radius: 10px; border: 1px dashed #2B588D; text-align: center;
-    }
-
-    /* --- MOBILE OPTIMIZATION (Screens smaller than 600px) --- */
-    @media only screen and (max-width: 600px) {
-        /* Make buttons full width for easy thumb tapping */
-        .stButton>button {
-            width: 100%;
-            margin-top: 10px;
-            padding: 15px;
-        }
-        /* Reduce empty space on sides so table fits better */
-        .block-container {
-            padding-left: 1rem;
-            padding-right: 1rem;
-        }
-        /* Adjust font sizes */
-        h1 { font-size: 24px !important; }
-        h2 { font-size: 20px !important; }
-    }
-
-    /* HIDE STREAMLIT BRANDING (But keep mobile menu visible) */
+    /* HIDE STREAMLIT BRANDING */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -97,7 +116,7 @@ BASE_PRICE = 29.99
 BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
-# --- 2. DATABASE ENGINE (NULL POOL MODE) ---
+# --- 2. DATABASE ENGINE ---
 @st.cache_resource
 def get_engine():
     try:
@@ -170,17 +189,23 @@ def get_referral_stats(my_code):
     return 0, 0
 
 def parse_currency(value):
-    """Cleans user input (removes $ and ,) and converts to float."""
     if not value: return 0.0
     if isinstance(value, (int, float)): return float(value)
-    # Remove '$' and ',' and spaces, then convert
     clean = str(value).replace('$', '').replace(',', '').strip()
-    try:
-        return float(clean)
-    except:
-        return 0.0
+    try: return float(clean)
+    except: return 0.0
 
-# --- PDF GENERATOR CLASS ---
+# --- CARD RENDERER FUNCTION ---
+def metric_card(title, value, subtext=""):
+    st.markdown(f"""
+    <div class="dashboard-card">
+        <div class="card-title">{title}</div>
+        <div class="card-value">{value}</div>
+        <div class="card-sub">{subtext}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- PDF GENERATORS (Minimally Changed) ---
 class BB_PDF(FPDF):
     def footer(self):
         self.set_y(-15)
@@ -192,24 +217,17 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf = BB_PDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
-    
-    # FIXED LOGO HANDLING (AUTO-CONVERT TO PNG)
     if logo_data:
         try:
             image = Image.open(io.BytesIO(logo_data))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                image.save(tmp, format="PNG")
-                tmp_path = tmp.name
-            pdf.image(tmp_path, 10, 10, 35)
-            os.unlink(tmp_path)
+                image.save(tmp, format="PNG"); tmp_path = tmp.name
+            pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-        
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 5, str(company_info.get('name', '')), ln=1, align='R')
-    pdf.set_font("Arial", size=10)
-    pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
-    pdf.set_xy(120, 35)
-    pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
+    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, str(company_info.get('address', '')), align='R')
+    pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
@@ -217,8 +235,7 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['client_name']}", ln=1)
     if project_info.get('billing_street'):
-        pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1)
-        pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
+        pdf.cell(0, 5, f"{project_info['billing_street']}", ln=1); pdf.cell(0, 5, f"{project_info['billing_city']}, {project_info['billing_state']} {project_info['billing_zip']}", ln=1)
     right_x = 110; current_y = 60; pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:"); current_y += 5; pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"{project_info['name']}")
@@ -243,13 +260,10 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
         try:
             image = Image.open(io.BytesIO(logo_data))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                image.save(tmp, format="PNG")
-                tmp_path = tmp.name
-            pdf.image(tmp_path, 10, 10, 35)
-            os.unlink(tmp_path)
+                image.save(tmp, format="PNG"); tmp_path = tmp.name
+            pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
-    # CHANGED FROM "STATEMENT OF ACCOUNT" TO "PROJECT STATEMENT"
     pdf.cell(0, 10, "PROJECT STATEMENT", ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0)
     pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R')
@@ -257,127 +271,67 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
     pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {project_name}", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {client_name}", ln=1)
     pdf.ln(10)
-    # Table Header (Navy Blue)
     pdf.set_fill_color(43, 88, 141); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 10)
     pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1)
-    pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1)
-    pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
-    # Rows
-    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9)
-    fill = False
+    pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1); pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
+    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9); fill = False
     for index, row in ledger_df.iterrows():
         if fill: pdf.set_fill_color(240, 240, 240)
         else: pdf.set_fill_color(255, 255, 255)
-        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill)
-        pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill)
-        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill)
-        pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill)
-        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill)
-        fill = not fill
+        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill); pdf.cell(80, 8, str(row['Details'])[:40], 1, 0, 'L', fill)
+        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill); pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill)
+        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
-    pdf = BB_PDF()
-    pdf.add_page()
-    
-    # --- HEADER SECTION ---
-    pdf.set_fill_color(43, 88, 141) # Navy Blue
-    pdf.rect(0, 0, 210, 40, 'F')
-    
-    # FIXED LOGO HANDLING (Different Coordinates for Dashboard)
+    pdf = BB_PDF(); pdf.add_page()
+    pdf.set_fill_color(43, 88, 141); pdf.rect(0, 0, 210, 40, 'F')
     if logo_data:
         try:
             image = Image.open(io.BytesIO(logo_data))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
-                image.save(tmp, format="PNG")
-                tmp_path = tmp.name
-            pdf.image(tmp_path, 10, 8, 25) # Note the coordinates 10, 8, 25
-            os.unlink(tmp_path)
+                image.save(tmp, format="PNG"); tmp_path = tmp.name
+            pdf.image(tmp_path, 10, 8, 25); os.unlink(tmp_path)
         except: pass
-    
-    pdf.set_xy(40, 10)
-    pdf.set_font("Arial", "B", 20); pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(40, 10); pdf.set_font("Arial", "B", 20); pdf.set_text_color(255, 255, 255)
     pdf.cell(0, 10, "EXECUTIVE FINANCIAL REPORT", ln=1)
-    pdf.set_xy(40, 20)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1)
-    
-    pdf.ln(20)
-    
-    # --- METRICS TABLE ---
-    pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Key Performance Indicators", ln=1)
-    pdf.ln(2)
-    
+    pdf.set_xy(40, 20); pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, f"{company_name} | Date: {datetime.date.today()}", ln=1); pdf.ln(20)
+    pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, "Key Performance Indicators", ln=1); pdf.ln(2)
     pdf.set_fill_color(218, 165, 32); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 11)
-    pdf.cell(100, 10, "Metric Category", 1, 0, 'L', 1)
-    pdf.cell(60, 10, "Value", 1, 1, 'R', 1)
-    
-    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11)
-    fill = False
+    pdf.cell(100, 10, "Metric Category", 1, 0, 'L', 1); pdf.cell(60, 10, "Value", 1, 1, 'R', 1)
+    pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=11); fill = False
     for key, value in metrics.items():
         if fill: pdf.set_fill_color(245, 245, 245)
         else: pdf.set_fill_color(255, 255, 255)
-        pdf.cell(100, 10, key, 1, 0, 'L', fill)
-        pdf.cell(60, 10, value, 1, 1, 'R', fill)
-        fill = not fill
-        
-    pdf.ln(15)
-    
-    # --- VISUALS SECTION ---
-    pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Visual Analysis", ln=1)
-    
+        pdf.cell(100, 10, key, 1, 0, 'L', fill); pdf.cell(60, 10, value, 1, 1, 'R', fill); fill = not fill
+    pdf.ln(15); pdf.set_text_color(43, 88, 141); pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, "Visual Analysis", ln=1)
     if chart_data:
-        # Chart 1: Revenue Breakdown (Bar) - Only if data exists
         total_rev = chart_data['Invoiced'] + chart_data['Collected'] + chart_data['Outstanding']
-        
         if total_rev > 0:
             plt.figure(figsize=(6, 4))
             categories = ['Invoiced', 'Collected', 'Outstanding AR']
             values = [chart_data['Invoiced'], chart_data['Collected'], chart_data['Outstanding']]
             colors = ['#2B588D', '#28a745', '#DAA520']
-            plt.bar(categories, values, color=colors)
-            plt.title('Revenue Distribution', color='#2B588D')
-            plt.grid(axis='y', linestyle='--', alpha=0.7)
-            
+            plt.bar(categories, values, color=colors); plt.title('Revenue Distribution', color='#2B588D'); plt.grid(axis='y', linestyle='--', alpha=0.7)
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart1:
-                plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight')
-                pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90)
-                os.unlink(tmp_chart1.name)
-        else:
-            pdf.set_font("Arial", "I", 10)
-            pdf.text(x=20, y=pdf.get_y() + 20, txt="No financial activity recorded yet.")
-
-        # Chart 2: Contract Status (Pie) - Only if sum > 0
+                plt.savefig(tmp_chart1.name, format='png', bbox_inches='tight'); pdf.image(tmp_chart1.name, x=10, y=pdf.get_y() + 5, w=90); os.unlink(tmp_chart1.name)
+        else: pdf.set_font("Arial", "I", 10); pdf.text(x=20, y=pdf.get_y() + 20, txt="No financial activity recorded yet.")
         pie_sizes = [chart_data['Invoiced'], chart_data['Remaining']]
-        
         if sum(pie_sizes) > 0:
-            plt.clf()
-            plt.figure(figsize=(6, 4))
+            plt.clf(); plt.figure(figsize=(6, 4))
             labels = ['Invoiced', 'Remaining']
-            plt.pie(pie_sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90)
-            plt.title('Contract Progress', color='#2B588D')
-            
+            plt.pie(pie_sizes, labels=labels, autopct='%1.1f%%', colors=['#2B588D', '#eef2f5'], startangle=90); plt.title('Contract Progress', color='#2B588D')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart2:
-                plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight')
-                pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90)
-                os.unlink(tmp_chart2.name)
-        else:
-            pdf.set_font("Arial", "I", 10)
-            pdf.text(x=130, y=pdf.get_y() + 20, txt="No contracts active.")
-
+                plt.savefig(tmp_chart2.name, format='png', bbox_inches='tight'); pdf.image(tmp_chart2.name, x=110, y=pdf.get_y() + 5, w=90); os.unlink(tmp_chart2.name)
+        else: pdf.set_font("Arial", "I", 10); pdf.text(x=130, y=pdf.get_y() + 20, txt="No contracts active.")
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def create_checkout_session(customer_id, discount_percent):
     try:
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
         if not prices.data: return None, "Price Not Found"
-        session_args = {
-            'customer': customer_id, 'payment_method_types': ['card'],
-            'line_items': [{'price': prices.data[0].id, 'quantity': 1}],
-            'mode': 'subscription', 'success_url': 'https://example.com/success', 'cancel_url': 'https://example.com/cancel'
-        }
+        session_args = {'customer': customer_id, 'payment_method_types': ['card'], 'line_items': [{'price': prices.data[0].id, 'quantity': 1}], 'mode': 'subscription', 'success_url': 'https://example.com/success', 'cancel_url': 'https://example.com/cancel'}
         session = stripe.checkout.Session.create(**session_args)
         return session.url, None
     except Exception as e: return None, str(e)
@@ -386,17 +340,14 @@ def create_stripe_customer(email, name):
     try: return stripe.Customer.create(email=email, name=name).id
     except: return None
 
-# --- 4. AUTHENTICATION ---
+# --- 4. APP LOGIC & NAVIGATION ---
 if 'user_id' not in st.session_state: st.session_state.user_id = None
+if 'page' not in st.session_state: st.session_state.page = "Dashboard"
 
 if st.session_state.user_id is None:
     if os.path.exists("bb_logo.png"): st.image("bb_logo.png", width=200)
-    else:
-        st.title("ProgressBill Pro")
-        st.caption("Powered by Balance & Build Consulting")
-
+    else: st.title("ProgressBill Pro"); st.caption("Powered by Balance & Build Consulting")
     tab1, tab2 = st.tabs(["Login", "Signup"])
-    
     with tab1:
         with st.form("login_form"):
             u = st.text_input("Username"); p = st.text_input("Password", type="password")
@@ -406,15 +357,10 @@ if st.session_state.user_id is None:
                 if not df.empty:
                     rec = df.iloc[0]
                     if check_password(p, rec['password']):
-                        st.session_state.user_id = int(rec['id'])
-                        st.session_state.sub_status = rec['subscription_status']
-                        st.session_state.stripe_cid = rec['stripe_customer_id']
-                        st.session_state.created_at = rec['created_at']
-                        st.session_state.my_ref_code = rec['referral_code']
+                        st.session_state.user_id = int(rec['id']); st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
                         st.success("Login successful!"); st.rerun()
                     else: st.error("Incorrect password")
                 else: st.error("Username not found")
-
     with tab2:
         st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
         with st.form("signup"):
@@ -433,23 +379,18 @@ if st.session_state.user_id is None:
                             h_p = hash_password(p); cid = create_stripe_customer(e, u)
                             my_ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                             today_str = str(datetime.date.today())
-                            if ref_input:
-                                execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
-                            execute_statement("""
-                                INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) 
-                                VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)
-                            """, params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
+                            if ref_input: execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
+                            execute_statement("INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)", params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
                             st.success("Account Created! Please switch to Login tab.")
                     except Exception as err: st.error(f"Error: {err}")
                 else: st.warning("Please fill all fields")
 
 else:
     user_id = st.session_state.user_id
-    
+    # Reload Context
     df_user = run_query("SELECT subscription_status, created_at, referral_code FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty: st.session_state.clear(); st.rerun()
     status, created_at_str, my_code = df_user.iloc[0]['subscription_status'], df_user.iloc[0]['created_at'], df_user.iloc[0]['referral_code']
-    
     active_referrals, discount_percent = get_referral_stats(my_code)
     days_left = 0; trial_active = False
     if status == 'Trial' and created_at_str:
@@ -458,7 +399,7 @@ else:
             days_left = 30 - (datetime.date.today() - start_date).days
             if days_left > 0: trial_active = True
         except: pass
-
+    
     if status != 'Active' and not trial_active:
         if discount_percent >= 100:
             st.balloons(); st.success("🎉 You have earned FREE ACCESS with 10+ Referrals!")
@@ -467,8 +408,6 @@ else:
                 st.session_state.sub_status = 'Active'; st.rerun()
         else:
             st.warning(f"⚠️ Trial Expired. You have {active_referrals} Active Referrals ({discount_percent}% Discount).")
-            new_price = BASE_PRICE * (1 - (discount_percent/100))
-            st.info(f"Your Monthly Price: **${new_price:.2f}** (Regular: ${BASE_PRICE})")
             if st.session_state.stripe_cid:
                 url, err = create_checkout_session(st.session_state.stripe_cid, discount_percent)
                 if url: st.link_button("Subscribe Now", url)
@@ -480,19 +419,33 @@ else:
     logo, c_name, c_addr, terms = u_data['logo_data'], u_data['company_name'], u_data['company_address'], u_data['terms_conditions']
     if isinstance(logo, memoryview): logo = logo.tobytes()
 
-    if trial_active:
-        st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Active Referrals: {active_referrals} (Current Discount: {discount_percent}%)")
+    if trial_active: st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Active Referrals: {active_referrals} ({discount_percent}% OFF)")
 
-    page = st.sidebar.radio("Navigate", ["Dashboard", "Projects", "Invoices", "Payments", "Settings"])
+    # --- CUSTOM SIDEBAR NAVIGATION (APP STYLE) ---
+    with st.sidebar:
+        if logo: st.image(logo, width=120)
+        else: st.header("Menu")
+        
+        # NAVIGATION GRID
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📊\nDash", use_container_width=True): st.session_state.page = "Dashboard"
+            if st.button("📝\nInvoice", use_container_width=True): st.session_state.page = "Invoices"
+            if st.button("⚙️\nSettings", use_container_width=True): st.session_state.page = "Settings"
+        with col2:
+            if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
+            if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
+            if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
+        
+        st.markdown("---")
+        st.caption(f"Ver: 1.0 | User: {user_id}")
+
+    # --- PAGE ROUTING ---
+    page = st.session_state.page
     
     if page == "Dashboard":
-        col_t, col_l = st.columns([4, 1])
-        with col_t:
-            st.title(f"{c_name} - ProgressBill Pro" if c_name else "ProgressBill Pro")
-            st.caption(f"Financial Overview for {c_name or 'My Firm'}")
-        with col_l:
-            if logo: st.image(logo, width=150)
-        st.markdown("---")
+        st.title("Financial Overview")
+        st.caption(f"Welcome back, {c_name or 'Admin'}")
         
         def get_scalar(q, p):
             res = run_query(q, p)
@@ -504,24 +457,16 @@ else:
         remaining_to_invoice = t_contracts - t_invoiced
         outstanding_ar = t_invoiced - t_collected
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Contracts", f"${t_contracts:,.2f}")
-        m2.metric("Total Invoiced", f"${t_invoiced:,.2f}")
-        m3.metric("Total Collected", f"${t_collected:,.2f}")
+        # --- PRO DASHBOARD CARDS (GRID LAYOUT) ---
+        c1, c2 = st.columns(2)
+        with c1:
+            metric_card("Total Contracts", f"${t_contracts:,.2f}", "Total Booked Work")
+            metric_card("Total Collected", f"${t_collected:,.2f}", "Cash in Bank")
+        with c2:
+            metric_card("Total Invoiced", f"${t_invoiced:,.2f}", f"Remaining: ${remaining_to_invoice:,.2f}")
+            metric_card("Outstanding AR", f"${outstanding_ar:,.2f}", "Unpaid Invoices")
         
-        m4, m5 = st.columns(2)
-        m4.metric("Remaining to Invoice", f"${remaining_to_invoice:,.2f}")
-        m5.metric("Outstanding AR (Unpaid)", f"${outstanding_ar:,.2f}", delta_color="inverse")
-        
-        # Dashboard PDF Export
-        dash_metrics = {
-            "Total Contracts": f"${t_contracts:,.2f}",
-            "Total Invoiced": f"${t_invoiced:,.2f}",
-            "Total Collected": f"${t_collected:,.2f}",
-            "Remaining to Invoice": f"${remaining_to_invoice:,.2f}",
-            "Outstanding AR": f"${outstanding_ar:,.2f}"
-        }
-        
+        # Chart Data
         chart_data_pdf = {
             'Invoiced': t_invoiced,
             'Collected': t_collected,
@@ -529,22 +474,24 @@ else:
             'Remaining': remaining_to_invoice
         }
         
+        # PDF Export
+        dash_metrics = {"Total Contracts": f"${t_contracts:,.2f}", "Total Invoiced": f"${t_invoiced:,.2f}", "Total Collected": f"${t_collected:,.2f}", "Remaining to Invoice": f"${remaining_to_invoice:,.2f}", "Outstanding AR": f"${outstanding_ar:,.2f}"}
         pdf_bytes = generate_dashboard_pdf(dash_metrics, c_name or "My Firm", logo, chart_data_pdf)
-        report_name = f"{c_name or 'Company'}_Executive_Report_{datetime.date.today()}.pdf"
-        st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, report_name, "application/pdf")
+        st.download_button("📂 Download Dashboard Report (PDF)", pdf_bytes, f"Executive_Report_{datetime.date.today()}.pdf", "application/pdf")
         
-        st.markdown("---")
-        c1, c2 = st.columns(2)
-        with c1:
+        # Visuals
+        st.markdown("### Analysis")
+        vc1, vc2 = st.columns(2)
+        with vc1:
             st.markdown("##### Revenue Breakdown")
             chart_data = pd.DataFrame({'Category': ['Invoiced', 'Collected', 'Outstanding AR'], 'Amount': [t_invoiced, t_collected, outstanding_ar]})
-            c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=300)
+            c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=250)
             st.altair_chart(c, use_container_width=True)
-        with c2:
+        with vc2:
             st.markdown("##### Contract Progress")
             pie_data = pd.DataFrame({'Status': ['Invoiced', 'Remaining'], 'Value': [t_invoiced, remaining_to_invoice]})
             base = alt.Chart(pie_data).encode(theta=alt.Theta("Value", stack=True))
-            pie = base.mark_arc(innerRadius=50).encode(color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])), tooltip=["Status", "Value"]).properties(height=300)
+            pie = base.mark_arc(innerRadius=50).encode(color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])), tooltip=["Status", "Value"]).properties(height=250)
             st.altair_chart(pie, use_container_width=True)
 
         st.markdown("---"); st.subheader("🔍 Project Deep-Dive")
@@ -555,16 +502,14 @@ else:
             client_name = projs[projs['name'] == p_choice]['client_name'].values[0]
             
             p_row = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
-            p_quoted, p_status = p_row['quoted_price'] or 0.0, p_row['status']
+            p_quoted = p_row['quoted_price'] or 0.0
             
             df_inv = run_query("SELECT issue_date, invoice_num, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
             df_pay = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
             
             ledger = []
-            for _, r in df_inv.iterrows():
-                ledger.append({'Date': r['issue_date'], 'Details': f"Invoice #{r['invoice_num']}", 'Charge': r['amount'], 'Payment': 0, 'Type': 'Inv'})
-            for _, r in df_pay.iterrows():
-                ledger.append({'Date': r['payment_date'], 'Details': f"Payment ({r['notes']})", 'Charge': 0, 'Payment': r['amount'], 'Type': 'Pay'})
+            for _, r in df_inv.iterrows(): ledger.append({'Date': r['issue_date'], 'Details': f"Invoice #{r['invoice_num']}", 'Charge': r['amount'], 'Payment': 0, 'Type': 'Inv'})
+            for _, r in df_pay.iterrows(): ledger.append({'Date': r['payment_date'], 'Details': f"Payment ({r['notes']})", 'Charge': 0, 'Payment': r['amount'], 'Type': 'Pay'})
             
             df_ledger = pd.DataFrame(ledger)
             
@@ -574,36 +519,21 @@ else:
                 df_ledger['Balance'] = (df_ledger['Charge'] - df_ledger['Payment']).cumsum()
                 df_ledger['Date'] = df_ledger['Date'].dt.date
                 
-                tot_bill = df_ledger['Charge'].sum()
-                tot_paid = df_ledger['Payment'].sum()
-                curr_bal = tot_bill - tot_paid
+                tot_bill = df_ledger['Charge'].sum(); tot_paid = df_ledger['Payment'].sum(); curr_bal = tot_bill - tot_paid
                 
-                pc1, pc2, pc3 = st.columns(3)
-                pc1.metric("Contract Value", f"${p_quoted:,.2f}")
-                pc2.metric("Total Billed", f"${tot_bill:,.2f}")
-                pc3.metric("Current Balance", f"${curr_bal:,.2f}", delta_color="inverse")
-                
-                # Statement PDF
-                st.markdown("### Project Ledger")
-                c_pdf, c_tbl = st.columns([1, 4])
-                with c_pdf:
+                # Project Specific Cards
+                pc1, pc2 = st.columns(2)
+                with pc1: metric_card("Project Value", f"${p_quoted:,.2f}")
+                with pc2: metric_card("Current Balance", f"${curr_bal:,.2f}", "Outstanding")
+
+                st.markdown("### Ledger History")
+                col_pdf, col_tbl = st.columns([1,3])
+                with col_pdf:
                     pdf_bytes = generate_statement_pdf(df_ledger, logo, {"name": c_name, "address": c_addr}, p_choice, client_name)
-                    st.download_button("📄 Download Statement (PDF)", pdf_bytes, f"statement_{p_choice}.pdf", "application/pdf")
+                    st.download_button("📄 Download Statement", pdf_bytes, f"statement_{p_choice}.pdf", "application/pdf")
                 
                 st.dataframe(df_ledger[['Date', 'Details', 'Charge', 'Payment', 'Balance']].style.format("{:.2f}", subset=['Charge', 'Payment', 'Balance']), use_container_width=True)
-                
-                l1, l2 = st.columns(2)
-                with l1:
-                    st.markdown("##### Account Balance History")
-                    line = alt.Chart(df_ledger).mark_line(point=True, color='#2B588D').encode(x='Date', y='Balance', tooltip=['Date', 'Balance']).properties(height=300)
-                    st.altair_chart(line, use_container_width=True)
-                with l2:
-                    st.markdown("##### Billed vs Collected")
-                    bar_df = pd.DataFrame({'Category': ['Billed', 'Collected'], 'Amount': [tot_bill, tot_paid]})
-                    bar = alt.Chart(bar_df).mark_bar().encode(x='Category', y='Amount', color='Category').properties(height=300)
-                    st.altair_chart(bar, use_container_width=True)
-            else:
-                st.info("No transactions recorded yet for this project.")
+            else: st.info("No transactions yet.")
         else: st.info("No projects found.")
 
     elif page == "Projects":
@@ -612,9 +542,7 @@ else:
             with st.form("new_proj"):
                 c1, c2 = st.columns(2)
                 n = c1.text_input("Project Name"); c = c2.text_input("Client Name")
-                # CHANGED TO TEXT INPUT FOR BETTER UX
-                q_str = c1.text_input("Quoted Price ($)", placeholder="0.00")
-                dur = c2.number_input("Duration (Days)", min_value=1)
+                q_str = c1.text_input("Quoted Price ($)", placeholder="0.00"); dur = c2.number_input("Duration (Days)", min_value=1)
                 st.markdown("##### Addresses")
                 ac1, ac2 = st.columns(2)
                 with ac1: b_street = st.text_input("Billing Street"); b_city = st.text_input("Billing City"); b_state = st.text_input("Billing State"); b_zip = st.text_input("Billing Zip")
@@ -625,21 +553,11 @@ else:
                 is_tax_exempt = c2.checkbox("Tax Exempt?"); scope = st.text_area("Scope")
                 submitted = st.form_submit_button("Create Project")
                 if submitted:
-                    # Clean the currency string before inserting
                     q = parse_currency(q_str)
-                    
-                    execute_statement("""
-                        INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) 
-                        VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)
-                    """, params={
-                        "uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, 
-                        "bs": b_street, "bc": b_city, "bst": b_state, "bz": b_zip, 
-                        "ss": s_street, "sc": s_city, "sst": s_state, "sz": s_zip, 
-                        "ite": 1 if is_tax_exempt else 0, "po": po, "stat": status, "scope": scope
-                    })
+                    execute_statement("INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)", params={"uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, "bs": b_street, "bc": b_city, "bst": b_state, "bz": b_zip, "ss": s_street, "sc": s_city, "sst": s_state, "sz": s_zip, "ite": 1 if is_tax_exempt else 0, "po": po, "stat": status, "scope": scope})
                     st.success("Project Saved"); st.rerun()
         
-        st.markdown("### Project Management")
+        st.markdown("### Active Projects")
         projs = run_query("SELECT id, name, client_name, status, quoted_price FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
             c_man_1, c_man_2 = st.columns([2, 2])
@@ -654,15 +572,13 @@ else:
                 p_del = st.selectbox("Delete Project", projs['name'], key="del_sel")
                 if st.button("Delete", type="primary"):
                     pid = int(projs[projs['name'] == p_del]['id'].values[0])
-                    execute_statement("DELETE FROM projects WHERE id=:id", {"id": pid})
-                    execute_statement("DELETE FROM invoices WHERE project_id=:id", {"id": pid})
-                    execute_statement("DELETE FROM payments WHERE project_id=:id", {"id": pid})
+                    execute_statement("DELETE FROM projects WHERE id=:id", {"id": pid}); execute_statement("DELETE FROM invoices WHERE project_id=:id", {"id": pid}); execute_statement("DELETE FROM payments WHERE project_id=:id", {"id": pid})
                     st.warning("Deleted"); st.rerun()
             st.dataframe(projs, use_container_width=True)
         else: st.info("No active projects.")
 
     elif page == "Invoices":
-        st.subheader("Invoicing")
+        st.subheader("Create Invoice")
         projs = run_query("SELECT * FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
             p = st.selectbox("Project", projs['name'])
@@ -670,38 +586,20 @@ else:
             tax_label = "Tax ($)" + (" - [EXEMPT]" if row['is_tax_exempt'] else "")
             
             with st.form("inv", clear_on_submit=True):
-                st.warning(f"Creating invoice for: **{row['name']}**")
+                st.warning(f"Billing: **{row['name']}**")
                 inv_date = st.date_input("Date", value=datetime.date.today())
-                
-                # CHANGED TO TEXT INPUTS
-                a_str = st.text_input("Amount ($)", placeholder="0.00")
-                t_str = st.text_input(tax_label, placeholder="0.00")
-                d = st.text_area("Desc")
-                
-                verified = st.checkbox("I verify billing is correct")
-                submitted = st.form_submit_button("Generate")
+                a_str = st.text_input("Amount ($)", placeholder="0.00"); t_str = st.text_input(tax_label, placeholder="0.00"); d = st.text_area("Description")
+                verified = st.checkbox("I verify billing is correct"); submitted = st.form_submit_button("Generate Invoice")
                 if submitted:
                     if verified:
-                        # Clean currency strings
-                        a = parse_currency(a_str)
-                        t = parse_currency(t_str)
-                        
+                        a = parse_currency(a_str); t = parse_currency(t_str)
                         res_num = run_query("SELECT MAX(invoice_num) FROM invoices WHERE user_id=:id", {"id": user_id})
                         current_max = res_num.iloc[0, 0] if not res_num.empty and res_num.iloc[0, 0] is not None else 1000
                         num = current_max + 1
-                        
                         p_info = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
                         pdf = generate_pdf_invoice({'number': num, 'amount': a+t, 'tax': t, 'date': str(inv_date), 'description': d}, logo, {'name': c_name, 'address': c_addr}, p_info, terms)
-                        st.session_state.pdf = pdf
-                        
-                        # --- CAPTURE FILENAME FOR DOWNLOAD BUTTON ---
-                        file_name = f"{row['client_name']}_Invoice#{num}_{inv_date}.pdf"
-                        st.session_state.inv_filename = file_name
-                        
-                        execute_statement("""
-                            INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) 
-                            VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)
-                        """, {"uid": user_id, "pid": int(row['id']), "num": int(num), "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
+                        st.session_state.pdf = pdf; file_name = f"{row['client_name']}_Invoice#{num}_{inv_date}.pdf"; st.session_state.inv_filename = file_name
+                        execute_statement("INSERT INTO invoices (user_id, project_id, invoice_num, amount, issue_date, description, tax) VALUES (:uid, :pid, :num, :amt, :dt, :desc, :tax)", {"uid": user_id, "pid": int(row['id']), "num": int(num), "amt": a+t, "dt": str(inv_date), "desc": d, "tax": t})
                         st.success(f"Invoice #{num} Generated")
                     else: st.error("Please verify details.")
             if "pdf" in st.session_state:
@@ -709,50 +607,36 @@ else:
                 st.download_button("Download PDF", st.session_state.pdf, fname, "application/pdf")
 
     elif page == "Payments":
-        st.subheader("Receive Payment")
+        st.subheader("Log Payment")
         projs = run_query("SELECT * FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
             p = st.selectbox("Project", projs['name'])
             row = projs[projs['name']==p].iloc[0]
             with st.form("pay_form", clear_on_submit=True):
-                st.warning(f"Logging payment for: **{row['name']}**")
-                
-                # CHANGED TO TEXT INPUT
-                amt_str = st.text_input("Amount ($)", placeholder="0.00")
-                
-                pay_date = st.date_input("Date"); notes = st.text_input("Notes")
-                verified_pay = st.checkbox("I verify payment details")
-                submitted_pay = st.form_submit_button("Log Payment")
+                amt_str = st.text_input("Amount Received ($)", placeholder="0.00")
+                pay_date = st.date_input("Date"); notes = st.text_input("Notes (Check #)")
+                verified_pay = st.checkbox("Confirm Payment"); submitted_pay = st.form_submit_button("Log Payment")
                 if submitted_pay:
                     if verified_pay:
-                        # Clean currency string
                         amt = parse_currency(amt_str)
-                        
-                        execute_statement("INSERT INTO payments (user_id, project_id, amount, payment_date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", 
-                                          {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
-                        st.success("Logged")
-                    else: st.error("Please verify details.")
-            st.markdown("### History")
+                        execute_statement("INSERT INTO payments (user_id, project_id, amount, payment_date, notes) VALUES (:uid, :pid, :amt, :dt, :n)", {"uid": user_id, "pid": int(row['id']), "amt": amt, "dt": str(pay_date), "n": notes})
+                        st.success("Payment Logged")
+                    else: st.error("Please verify.")
+            st.markdown("### Payment History")
             hist = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": int(row['id'])})
             st.dataframe(hist)
 
     elif page == "Settings":
-        st.header("Company Settings")
-        st.markdown(f"""<div class="referral-box"><h3>🚀 Referral Program</h3><p>Share your code to earn <b>10% OFF</b> for every active user you refer! (10 Referrals = FREE)</p><h2>{my_code}</h2><p>Active Referrals: <b>{active_referrals}</b> | Current Discount: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
+        st.header("Settings")
+        st.markdown(f"""<div class="referral-box"><h3>🚀 Refer & Earn</h3><p>Share code: <b>{my_code}</b></p><p>Active Referrals: <b>{active_referrals}</b> | Discount: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
         st.progress(min(discount_percent, 100) / 100)
-        st.markdown("### Edit Profile")
         with st.form("set"):
-            cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Logo")
-            submitted_set = st.form_submit_button("Save")
+            cn = st.text_input("Company Name", value=c_name or ""); ca = st.text_area("Address", value=c_addr or ""); t_cond = st.text_area("Terms", value=terms or ""); l = st.file_uploader("Update Logo")
+            submitted_set = st.form_submit_button("Save Profile")
             if submitted_set:
-                existing = run_query("SELECT id FROM users WHERE company_name=:cn AND id!=:uid", {"cn": cn, "uid": user_id})
-                if not existing.empty and cn.strip() != "": st.error("⚠️ Company Name already registered.")
+                if l:
+                    lb = l.read()
+                    execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else:
-                    if l:
-                        lb = l.read()
-                        execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
-                    else:
-                        execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
-                    st.success("Saved"); st.rerun()
-
-    if st.sidebar.button("Logout"): st.session_state.clear(); st.rerun()
+                    execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
+                st.success("Profile Updated"); st.rerun()
