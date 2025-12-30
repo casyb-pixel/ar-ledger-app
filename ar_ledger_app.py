@@ -17,24 +17,31 @@ from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-# TRY TO IMPORT SPELLCHECKER
+# 1. TRY TO IMPORT SPELLCHECKER (Handle if missing)
 try:
     from spellchecker import SpellChecker
     SPELLCHECK_AVAILABLE = True
 except ImportError:
     SPELLCHECK_AVAILABLE = False
 
+# 2. TRY TO IMPORT COOKIE MANAGER (Handle if missing - FIXED)
+try:
+    import extra_streamlit_components as stx
+    COOKIE_MANAGER_AVAILABLE = True
+except ImportError:
+    COOKIE_MANAGER_AVAILABLE = False
+
 # Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
 
-# --- 1. CONFIGURATION & BRANDING ---
+# --- CONFIGURATION & BRANDING ---
 fav_icon = "favicon.png" if os.path.exists("favicon.png") else None
 
 st.set_page_config(
     page_title="ProgressBill Pro", 
     page_icon=fav_icon, 
     layout="wide", 
-    initial_sidebar_state="auto"
+    initial_sidebar_state="auto" # Helps with mobile menu behavior
 )
 
 # --- ADMIN CONFIGURATION ---
@@ -82,7 +89,7 @@ BASE_PRICE = 29.99
 BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
-# --- 2. DATABASE ENGINE ---
+# --- DATABASE ENGINE ---
 @st.cache_resource
 def get_engine():
     try:
@@ -138,7 +145,7 @@ def init_db():
 
 init_db()
 
-# --- 3. HELPER FUNCTIONS ---
+# --- HELPER FUNCTIONS ---
 def hash_password(password):
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -279,7 +286,7 @@ def create_stripe_customer(email, name):
     try: return stripe.Customer.create(email=email, name=name).id
     except: return None
 
-# --- 4. APP LOGIC & NAVIGATION ---
+# --- APP LOGIC & NAVIGATION ---
 if 'user_id' not in st.session_state: st.session_state.user_id = None
 if 'username' not in st.session_state: st.session_state.username = ""
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
@@ -289,23 +296,15 @@ cookie_manager = None
 if COOKIE_MANAGER_AVAILABLE:
     cookie_manager = stx.CookieManager()
 
-# --- CHECK COOKIES FOR AUTO-LOGIN (Only if not already logged in) ---
+# --- CHECK COOKIES FOR AUTO-LOGIN ---
 if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE:
-    # Try to get the cookie (this can be slow, so we wait slightly)
     cookies = cookie_manager.get_all()
     user_cookie = cookies.get("progressbill_user")
-    
     if user_cookie:
-        # User has a cookie! Validate it against the database
         df_cookie = run_query("SELECT id, username, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": user_cookie})
         if not df_cookie.empty:
             rec = df_cookie.iloc[0]
-            st.session_state.user_id = int(rec['id'])
-            st.session_state.username = rec['username']
-            st.session_state.sub_status = rec['subscription_status']
-            st.session_state.stripe_cid = rec['stripe_customer_id']
-            st.session_state.created_at = rec['created_at']
-            st.session_state.my_ref_code = rec['referral_code']
+            st.session_state.user_id = int(rec['id']); st.session_state.username = rec['username']; st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
             st.rerun()
 
 if st.session_state.user_id is None:
@@ -314,7 +313,6 @@ if st.session_state.user_id is None:
     tab1, tab2 = st.tabs(["Login", "Signup"])
     with tab1:
         with st.form("login_form"):
-            # CASE SENSITIVITY FIX
             u = st.text_input("Username").lower().strip()
             p = st.text_input("Password", type="password")
             remember = st.checkbox("Remember Me (Keep me logged in)")
@@ -324,20 +322,15 @@ if st.session_state.user_id is None:
                 if not df.empty:
                     rec = df.iloc[0]
                     if check_password(p, rec['password']):
-                        # LOGIN SUCCESS
                         st.session_state.user_id = int(rec['id']); st.session_state.username = u; st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
-                        
-                        # SET COOKIE IF REQUESTED
                         if remember and COOKIE_MANAGER_AVAILABLE:
                             cookie_manager.set("progressbill_user", u, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
-                        
                         st.success("Login successful!"); st.rerun()
                     else: st.error("Incorrect password")
                 else: st.error("Username not found")
     with tab2:
         st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
         with st.form("signup"):
-            # CASE SENSITIVITY FIX
             u = st.text_input("Username").lower().strip()
             p = st.text_input("Password", type="password"); e = st.text_input("Email")
             ref_input = st.text_input("Referral/Affiliate Code (Optional)")
@@ -364,13 +357,12 @@ else:
     user_id = st.session_state.user_id
     curr_username = st.session_state.username
     
-    # Reload Context
     df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty: st.session_state.clear(); st.rerun()
     row = df_user.iloc[0]
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
     
-    # --- PRICING LOGIC UPDATE ---
+    # --- PRICING LOGIC ---
     active_referrals, discount_percent_earned = get_referral_stats(my_code)
     discount_from_affiliate = 10 if referred_by else 0
     total_discount = min(discount_percent_earned + discount_from_affiliate, 100)
@@ -385,7 +377,9 @@ else:
     
     if status == 'Affiliate':
         st.warning("⚠️ This is an Affiliate Account. Access restricted to API tracking only.")
-        if st.button("Logout"): st.session_state.clear(); st.rerun()
+        if st.button("Logout"): 
+            if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
+            st.session_state.clear(); st.rerun()
         st.stop()
 
     if status != 'Active' and not trial_active and curr_username != ADMIN_USERNAME:
@@ -399,7 +393,9 @@ else:
             if st.session_state.stripe_cid:
                 url, err = create_checkout_session(st.session_state.stripe_cid, total_discount)
                 if url: st.link_button("Subscribe Now", url)
-            if st.button("Logout"): st.session_state.clear(); st.rerun()
+            if st.button("Logout"):
+                if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
+                st.session_state.clear(); st.rerun()
             st.stop()
 
     df_full = run_query("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
@@ -422,7 +418,9 @@ else:
                 if st.button("⚙️\nSettings", use_container_width=True): st.session_state.page = "Settings"
         with col2:
             if curr_username == ADMIN_USERNAME:
-                 if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
+                 if st.button("🚪\nLogout", use_container_width=True):
+                    if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
+                    st.session_state.clear(); st.rerun()
             else:
                 if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
                 if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
@@ -435,9 +433,7 @@ else:
     
     if curr_username == ADMIN_USERNAME and page == "Affiliate Manager":
         st.title("👥 Affiliate Manager")
-        st.markdown("### Create New Affiliate")
         with st.form("new_affiliate"):
-            # CASE SENSITIVITY FIX
             aff_name = st.text_input("Affiliate Name (Internal ID)")
             aff_code = st.text_input("Custom Referral Code (e.g., INFLUENCER20)")
             submitted_aff = st.form_submit_button("Generate Code")
@@ -563,7 +559,6 @@ else:
             p = st.selectbox("Project", projs['name']); row = projs[projs['name']==p].iloc[0]
             tax_label = "Tax ($)" + (" - [EXEMPT]" if row['is_tax_exempt'] else "")
             
-            # REMOVED clear_on_submit=True HERE
             with st.form("inv"):
                 st.warning(f"Billing: **{row['name']}**"); inv_date = st.date_input("Date", value=datetime.date.today())
                 a_str = st.text_input("Amount ($)", placeholder="0.00"); t_str = st.text_input(tax_label, placeholder="0.00"); d = st.text_area("Description")
@@ -592,7 +587,6 @@ else:
                 fname = st.session_state.get("inv_filename", "invoice.pdf")
                 st.download_button("Download PDF", st.session_state.pdf, fname, "application/pdf")
             
-            # --- NEW: INVOICE HISTORY & REPRINT SECTION ---
             st.markdown("---")
             st.subheader("📜 Invoice History & Reprint")
             hist_inv = run_query("SELECT invoice_num, issue_date, amount, tax, description FROM invoices WHERE project_id=:pid ORDER BY invoice_num DESC", {"pid": int(row['id'])})
