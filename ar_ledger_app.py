@@ -189,20 +189,23 @@ def run_spell_check(text):
 def metric_card(title, value, subtext=""):
     st.markdown(f"""<div class="dashboard-card"><div class="card-title">{title}</div><div class="card-value">{value}</div><div class="card-sub">{subtext}</div></div>""", unsafe_allow_html=True)
 
-# --- NEW FUNCTION: SANITIZE TEXT FOR PDF ---
+# --- SANITIZE TEXT FOR PDF (AGGRESSIVE) ---
 def clean_text(text):
     """Replaces smart quotes and non-latin chars to prevent PDF crashes."""
     if not text: return ""
     text = str(text)
-    # Map common Word/Smart characters to standard ASCII
+    # 1. Replace common "Smart" characters
     replacements = {
-        '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
-        '\u2013': '-', '\u2014': '-'
+        '\u2018': "'", '\u2019': "'", # Smart single quotes
+        '\u201c': '"', '\u201d': '"', # Smart double quotes
+        '\u2013': '-', '\u2014': '-', # En-dash and Em-dash
+        '\u2026': '...',              # Ellipsis
+        '\u00A0': ' '                 # Non-breaking space
     }
     for k, v in replacements.items():
         text = text.replace(k, v)
     
-    # Force encode to latin-1, replacing unknown chars (like emojis) with ?
+    # 2. Force encode to Latin-1, discarding anything else (emojis, etc.)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 # --- PDF GENERATOR CLASS ---
@@ -219,21 +222,46 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
                 image.save(tmp, format="PNG"); tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, clean_text(company_info.get('name', '')), ln=1, align='R')
-    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, clean_text(company_info.get('address', '')), align='R')
+    
+    # WRAP EVERY TEXT FIELD IN clean_text()
+    c_name = clean_text(company_info.get('name', ''))
+    c_addr = clean_text(company_info.get('address', ''))
+    
+    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, c_name, ln=1, align='R')
+    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, c_addr, align='R')
+    
     pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
-    if project_info.get('po_number'): pdf.cell(0, 5, f"PO #: {clean_text(project_info['po_number'])}", ln=1, align='R')
+    
+    if project_info.get('po_number'): 
+        pdf.cell(0, 5, f"PO #: {clean_text(project_info['po_number'])}", ln=1, align='R')
+    
     pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, clean_text(project_info['client_name']), ln=1)
-    if project_info.get('billing_street'): pdf.cell(0, 5, clean_text(project_info['billing_street']), ln=1); pdf.cell(0, 5, f"{clean_text(project_info['billing_city'])}, {clean_text(project_info['billing_state'])} {clean_text(project_info['billing_zip'])}", ln=1)
+    
+    if project_info.get('billing_street'): 
+        pdf.cell(0, 5, clean_text(project_info['billing_street']), ln=1)
+        pdf.cell(0, 5, f"{clean_text(project_info['billing_city'])}, {clean_text(project_info['billing_state'])} {clean_text(project_info['billing_zip'])}", ln=1)
+    
     right_x = 110; current_y = 60; pdf.set_xy(right_x, current_y); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:"); current_y += 5; pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, clean_text(project_info['name']))
-    if project_info.get('site_street'): current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, clean_text(project_info['site_street'])); current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{clean_text(project_info['site_city'])}, {clean_text(project_info['site_state'])} {clean_text(project_info['site_zip'])}")
-    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1); pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, clean_text(inv_data['description']))
-    pdf.ln(10); pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R'); pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R'); pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
-    if terms: pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1); pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, clean_text(terms))
+    
+    if project_info.get('site_street'): 
+        current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, clean_text(project_info['site_street']))
+        current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{clean_text(project_info['site_city'])}, {clean_text(project_info['site_state'])} {clean_text(project_info['site_zip'])}")
+    
+    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
+    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, clean_text(inv_data['description']))
+    
+    pdf.ln(10); pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R')
+    pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R')
+    pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
+    
+    if terms: 
+        pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1)
+        pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, clean_text(terms))
+        
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, client_name):
@@ -247,14 +275,19 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
         except: pass
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141); pdf.cell(0, 10, "PROJECT STATEMENT", ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R'); pdf.ln(10)
-    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {clean_text(project_name)}", ln=1); pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {clean_text(client_name)}", ln=1); pdf.ln(10)
+    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {clean_text(project_name)}", ln=1)
+    pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {clean_text(client_name)}", ln=1); pdf.ln(10)
     pdf.set_fill_color(43, 88, 141); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 10)
     pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1); pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1); pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9); fill = False
     for index, row in ledger_df.iterrows():
         if fill: pdf.set_fill_color(240, 240, 240)
         else: pdf.set_fill_color(255, 255, 255)
-        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill); pdf.cell(80, 8, clean_text(str(row['Details'])[:40]), 1, 0, 'L', fill); pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill); pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill); pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
+        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill)
+        pdf.cell(80, 8, clean_text(str(row['Details'])[:40]), 1, 0, 'L', fill)
+        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill)
+        pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill)
+        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
@@ -451,7 +484,6 @@ else:
     if curr_username == ADMIN_USERNAME and page == "Affiliate Manager":
         st.title("👥 Affiliate Manager")
         with st.form("new_affiliate"):
-            # CASE SENSITIVITY FIX
             aff_name = st.text_input("Affiliate Name (Internal ID)")
             aff_code = st.text_input("Custom Referral Code (e.g., INFLUENCER20)")
             submitted_aff = st.form_submit_button("Generate Code")
@@ -498,11 +530,11 @@ else:
         with vc1:
             st.markdown("##### Revenue Breakdown")
             chart_data = pd.DataFrame({'Category': ['Invoiced', 'Collected', 'Outstanding AR'], 'Amount': [t_invoiced, t_collected, outstanding_ar]})
-            c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=250); st.altair_chart(c, use_container_width=True)
+            c = alt.Chart(chart_data).mark_bar().encode(x='Category', y='Amount', color=alt.Color('Category', scale=alt.Scale(scheme='tableau10'))).properties(height=250); st.altair_chart(c, theme="streamlit", use_container_width=True)
         with vc2:
             st.markdown("##### Contract Progress")
             pie_data = pd.DataFrame({'Status': ['Invoiced', 'Remaining'], 'Value': [t_invoiced, remaining_to_invoice]})
-            base = alt.Chart(pie_data).encode(theta=alt.Theta("Value", stack=True)); pie = base.mark_arc(innerRadius=50).encode(color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])), tooltip=["Status", "Value"]).properties(height=250); st.altair_chart(pie, use_container_width=True)
+            base = alt.Chart(pie_data).encode(theta=alt.Theta("Value", stack=True)); pie = base.mark_arc(innerRadius=50).encode(color=alt.Color("Status", scale=alt.Scale(domain=['Invoiced', 'Remaining'], range=['#2B588D', '#DAA520'])), tooltip=["Status", "Value"]).properties(height=250); st.altair_chart(pie, theme="streamlit", use_container_width=True)
         st.markdown("---"); st.subheader("🔍 Project Deep-Dive")
         projs = run_query("SELECT id, name, client_name FROM projects WHERE user_id=:id", {"id": user_id})
         if not projs.empty:
