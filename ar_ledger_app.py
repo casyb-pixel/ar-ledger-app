@@ -24,13 +24,6 @@ try:
 except ImportError:
     SPELLCHECK_AVAILABLE = False
 
-# TRY TO IMPORT COOKIE MANAGER (Handle if missing)
-try:
-    import extra_streamlit_components as stx
-    COOKIE_MANAGER_AVAILABLE = True
-except ImportError:
-    COOKIE_MANAGER_AVAILABLE = False
-
 # Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
 
@@ -41,7 +34,7 @@ st.set_page_config(
     page_title="ProgressBill Pro", 
     page_icon=fav_icon, 
     layout="wide", 
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto"  # CHANGED TO 'auto' SO MENU CLOSES ON MOBILE
 )
 
 # --- ADMIN CONFIGURATION ---
@@ -291,58 +284,29 @@ if 'user_id' not in st.session_state: st.session_state.user_id = None
 if 'username' not in st.session_state: st.session_state.username = ""
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
 
-# --- COOKIE MANAGER SETUP ---
-cookie_manager = None
-if COOKIE_MANAGER_AVAILABLE:
-    cookie_manager = stx.CookieManager()
-
-# --- CHECK COOKIES FOR AUTO-LOGIN (Only if not already logged in) ---
-if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE:
-    # Try to get the cookie (this can be slow, so we wait slightly)
-    cookies = cookie_manager.get_all()
-    user_cookie = cookies.get("progressbill_user")
-    
-    if user_cookie:
-        # User has a cookie! Validate it against the database
-        df_cookie = run_query("SELECT id, username, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": user_cookie})
-        if not df_cookie.empty:
-            rec = df_cookie.iloc[0]
-            st.session_state.user_id = int(rec['id'])
-            st.session_state.username = rec['username']
-            st.session_state.sub_status = rec['subscription_status']
-            st.session_state.stripe_cid = rec['stripe_customer_id']
-            st.session_state.created_at = rec['created_at']
-            st.session_state.my_ref_code = rec['referral_code']
-            st.rerun()
-
 if st.session_state.user_id is None:
     if os.path.exists("BB_logo.png"): st.image("BB_logo.png", width=200)
     else: st.title("ProgressBill Pro"); st.caption("Powered by Balance & Build Consulting")
     tab1, tab2 = st.tabs(["Login", "Signup"])
     with tab1:
         with st.form("login_form"):
+            # CASE SENSITIVITY FIX
             u = st.text_input("Username").lower().strip()
             p = st.text_input("Password", type="password")
-            remember = st.checkbox("Remember Me (Keep me logged in)")
             submitted = st.form_submit_button("Login")
             if submitted:
                 df = run_query("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
                 if not df.empty:
                     rec = df.iloc[0]
                     if check_password(p, rec['password']):
-                        # LOGIN SUCCESS
                         st.session_state.user_id = int(rec['id']); st.session_state.username = u; st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
-                        
-                        # SET COOKIE IF REQUESTED
-                        if remember and COOKIE_MANAGER_AVAILABLE:
-                            cookie_manager.set("progressbill_user", u, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
-                        
                         st.success("Login successful!"); st.rerun()
                     else: st.error("Incorrect password")
                 else: st.error("Username not found")
     with tab2:
         st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
         with st.form("signup"):
+            # CASE SENSITIVITY FIX
             u = st.text_input("Username").lower().strip()
             p = st.text_input("Password", type="password"); e = st.text_input("Email")
             ref_input = st.text_input("Referral/Affiliate Code (Optional)")
@@ -390,9 +354,7 @@ else:
     
     if status == 'Affiliate':
         st.warning("⚠️ This is an Affiliate Account. Access restricted to API tracking only.")
-        if st.button("Logout"): 
-            if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-            st.session_state.clear(); st.rerun()
+        if st.button("Logout"): st.session_state.clear(); st.rerun()
         st.stop()
 
     if status != 'Active' and not trial_active and curr_username != ADMIN_USERNAME:
@@ -406,9 +368,7 @@ else:
             if st.session_state.stripe_cid:
                 url, err = create_checkout_session(st.session_state.stripe_cid, total_discount)
                 if url: st.link_button("Subscribe Now", url)
-            if st.button("Logout"):
-                if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-                st.session_state.clear(); st.rerun()
+            if st.button("Logout"): st.session_state.clear(); st.rerun()
             st.stop()
 
     df_full = run_query("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
@@ -431,15 +391,11 @@ else:
                 if st.button("⚙️\nSettings", use_container_width=True): st.session_state.page = "Settings"
         with col2:
             if curr_username == ADMIN_USERNAME:
-                 if st.button("🚪\nLogout", use_container_width=True):
-                    if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-                    st.session_state.clear(); st.rerun()
+                 if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
             else:
                 if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
                 if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
-                if st.button("🚪\nLogout", use_container_width=True):
-                    if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-                    st.session_state.clear(); st.rerun()
+                if st.button("🚪\nLogout", use_container_width=True): st.session_state.clear(); st.rerun()
         st.markdown("---"); st.caption(f"Ver: 1.0 | User: {curr_username}")
 
     page = st.session_state.page
@@ -639,7 +595,8 @@ else:
 
     elif page == "Settings":
         st.header("Settings")
-        st.markdown(f"""<div class="referral-box"><h3>🚀 Refer & Earn</h3><p>Share code: <b>{my_code}</b></p><p>Active Referrals: <b>{active_referrals}</b> | Discount Earned: <b>{discount_percent}%</b></p></div><br>""", unsafe_allow_html=True)
+        # FIXED NAME ERROR HERE (Changed discount_percent to discount_percent_earned)
+        st.markdown(f"""<div class="referral-box"><h3>🚀 Refer & Earn</h3><p>Share code: <b>{my_code}</b></p><p>Active Referrals: <b>{active_referrals}</b> | Discount Earned: <b>{discount_percent_earned}%</b></p></div><br>""", unsafe_allow_html=True)
         if referred_by: st.success(f"✅ You are receiving a 10% Discount for being referred by: {referred_by}")
         st.info(f"Total Current Discount: {total_discount}%"); st.progress(min(total_discount, 100) / 100)
         with st.form("set"):
