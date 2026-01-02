@@ -189,23 +189,16 @@ def run_spell_check(text):
 def metric_card(title, value, subtext=""):
     st.markdown(f"""<div class="dashboard-card"><div class="card-title">{title}</div><div class="card-value">{value}</div><div class="card-sub">{subtext}</div></div>""", unsafe_allow_html=True)
 
-# --- SANITIZE TEXT FOR PDF (AGGRESSIVE) ---
+# --- SANITIZE TEXT FOR PDF ---
 def clean_text(text):
     """Replaces smart quotes and non-latin chars to prevent PDF crashes."""
     if not text: return ""
     text = str(text)
-    # 1. Replace common "Smart" characters
     replacements = {
-        '\u2018': "'", '\u2019': "'", # Smart single quotes
-        '\u201c': '"', '\u201d': '"', # Smart double quotes
-        '\u2013': '-', '\u2014': '-', # En-dash and Em-dash
-        '\u2026': '...',              # Ellipsis
-        '\u00A0': ' '                 # Non-breaking space
+        '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"',
+        '\u2013': '-', '\u2014': '-', '\u2026': '...', '\u00A0': ' '
     }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-    
-    # 2. Force encode to Latin-1, discarding anything else (emojis, etc.)
+    for k, v in replacements.items(): text = text.replace(k, v)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 # --- PDF GENERATOR CLASS ---
@@ -222,46 +215,22 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
                 image.save(tmp, format="PNG"); tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-    
-    # WRAP EVERY TEXT FIELD IN clean_text()
-    c_name = clean_text(company_info.get('name', ''))
-    c_addr = clean_text(company_info.get('address', ''))
-    
+    c_name = clean_text(company_info.get('name', '')); c_addr = clean_text(company_info.get('address', ''))
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, c_name, ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, c_addr, align='R')
-    
     pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
-    
-    if project_info.get('po_number'): 
-        pdf.cell(0, 5, f"PO #: {clean_text(project_info['po_number'])}", ln=1, align='R')
-    
+    if project_info.get('po_number'): pdf.cell(0, 5, f"PO #: {clean_text(project_info['po_number'])}", ln=1, align='R')
     pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, clean_text(project_info['client_name']), ln=1)
-    
-    if project_info.get('billing_street'): 
-        pdf.cell(0, 5, clean_text(project_info['billing_street']), ln=1)
-        pdf.cell(0, 5, f"{clean_text(project_info['billing_city'])}, {clean_text(project_info['billing_state'])} {clean_text(project_info['billing_zip'])}", ln=1)
-    
+    if project_info.get('billing_street'): pdf.cell(0, 5, clean_text(project_info['billing_street']), ln=1); pdf.cell(0, 5, f"{clean_text(project_info['billing_city'])}, {clean_text(project_info['billing_state'])} {clean_text(project_info['billing_zip'])}", ln=1)
     right_x = 110; current_y = 60; pdf.set_xy(right_x, current_y); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "PROJECT SITE:"); current_y += 5; pdf.set_xy(right_x, current_y)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, clean_text(project_info['name']))
-    
-    if project_info.get('site_street'): 
-        current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, clean_text(project_info['site_street']))
-        current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{clean_text(project_info['site_city'])}, {clean_text(project_info['site_state'])} {clean_text(project_info['site_zip'])}")
-    
-    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1)
-    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, clean_text(inv_data['description']))
-    
-    pdf.ln(10); pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R')
-    pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R')
-    pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
-    
-    if terms: 
-        pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1)
-        pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, clean_text(terms))
-        
+    if project_info.get('site_street'): current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, clean_text(project_info['site_street'])); current_y += 5; pdf.set_xy(right_x, current_y); pdf.cell(0, 5, f"{clean_text(project_info['site_city'])}, {clean_text(project_info['site_state'])} {clean_text(project_info['site_zip'])}")
+    pdf.set_xy(10, 95); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "DESCRIPTION:", ln=1); pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, clean_text(inv_data['description']))
+    pdf.ln(10); pdf.cell(0, 5, f"Subtotal: ${inv_data['amount'] - inv_data['tax']:,.2f}", ln=1, align='R'); pdf.cell(0, 5, f"Tax: ${inv_data['tax']:,.2f}", ln=1, align='R'); pdf.set_font("Arial", "B", 12); pdf.cell(0, 10, f"TOTAL: ${inv_data['amount']:,.2f}", border="T", ln=1, align='R')
+    if terms: pdf.ln(15); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "TERMS & CONDITIONS:", ln=1); pdf.set_font("Arial", size=8); pdf.multi_cell(0, 4, clean_text(terms))
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, client_name):
@@ -275,19 +244,14 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
         except: pass
     pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141); pdf.cell(0, 10, "PROJECT STATEMENT", ln=1, align='R')
     pdf.set_font("Arial", size=10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R'); pdf.ln(10)
-    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {clean_text(project_name)}", ln=1)
-    pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {clean_text(client_name)}", ln=1); pdf.ln(10)
+    pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, f"Project: {clean_text(project_name)}", ln=1); pdf.set_font("Arial", size=10); pdf.cell(0, 5, f"Client: {clean_text(client_name)}", ln=1); pdf.ln(10)
     pdf.set_fill_color(43, 88, 141); pdf.set_text_color(255, 255, 255); pdf.set_font("Arial", "B", 10)
     pdf.cell(30, 8, "Date", 1, 0, 'C', 1); pdf.cell(80, 8, "Description", 1, 0, 'L', 1); pdf.cell(25, 8, "Charge", 1, 0, 'R', 1); pdf.cell(25, 8, "Payment", 1, 0, 'R', 1); pdf.cell(30, 8, "Balance", 1, 1, 'R', 1)
     pdf.set_text_color(0, 0, 0); pdf.set_font("Arial", size=9); fill = False
     for index, row in ledger_df.iterrows():
         if fill: pdf.set_fill_color(240, 240, 240)
         else: pdf.set_fill_color(255, 255, 255)
-        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill)
-        pdf.cell(80, 8, clean_text(str(row['Details'])[:40]), 1, 0, 'L', fill)
-        pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill)
-        pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill)
-        pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
+        pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill); pdf.cell(80, 8, clean_text(str(row['Details'])[:40]), 1, 0, 'L', fill); pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill); pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill); pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
@@ -461,7 +425,7 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             if curr_username == ADMIN_USERNAME:
-                if st.button("👥\nAdmin", use_container_width=True): st.session_state.page = "Affiliate Manager"
+                if st.button("👥\nAdmin", use_container_width=True): st.session_state.page = "Admin Dashboard"
             else:
                 if st.button("📊\nDash", use_container_width=True): st.session_state.page = "Dashboard"
                 if st.button("📝\nInvoice", use_container_width=True): st.session_state.page = "Invoices"
@@ -481,32 +445,154 @@ else:
 
     page = st.session_state.page
     
-    if curr_username == ADMIN_USERNAME and page == "Affiliate Manager":
-        st.title("👥 Affiliate Manager")
-        with st.form("new_affiliate"):
-            aff_name = st.text_input("Affiliate Name (Internal ID)")
-            aff_code = st.text_input("Custom Referral Code (e.g., INFLUENCER20)")
-            submitted_aff = st.form_submit_button("Generate Code")
-            if submitted_aff:
-                aff_name_clean = aff_name.lower().strip()
-                fake_email = f"{aff_name_clean.replace(' ', '')}@affiliate.com"
-                fake_pass = hash_password("affiliate_dummy_pass")
-                try:
-                    execute_statement("INSERT INTO users (username, password, email, referral_code, subscription_status) VALUES (:u, :p, :e, :rc, 'Affiliate')", params={"u": aff_name_clean, "p": fake_pass, "e": fake_email, "rc": aff_code})
-                    st.success(f"Affiliate Created: Code **{aff_code}** is live!")
-                except Exception as e: st.error(f"Error (Code likely taken): {e}")
-        st.markdown("---"); st.markdown("### Commission Report")
-        affiliates = run_query("SELECT username, referral_code FROM users WHERE subscription_status='Affiliate'")
-        if not affiliates.empty:
-            report_data = []
-            for _, aff in affiliates.iterrows():
-                code = aff['referral_code']
-                count_res = run_query("SELECT COUNT(*) FROM users WHERE referred_by=:c AND subscription_status IN ('Active', 'Trial')", params={"c": code})
-                active_refs = count_res.iloc[0, 0] if not count_res.empty else 0
-                commission = active_refs * AFFILIATE_COMMISSION_PER_USER
-                report_data.append({"Affiliate": aff['username'], "Code": code, "Active Referrals": active_refs, "Commission Due (Monthly)": f"${commission:,.2f}"})
-            st.dataframe(pd.DataFrame(report_data), use_container_width=True)
-        else: st.info("No affiliates created yet.")
+    # --- UPDATED ADMIN DASHBOARD ---
+    if curr_username == ADMIN_USERNAME and page == "Admin Dashboard":
+        st.title("📊 Admin & Affiliate Intelligence")
+        
+        tab_refs, tab_activity, tab_alerts, tab_manage = st.tabs(["📈 Referral Stats", "🔥 User Activity", "⚠️ Alerts", "⚙️ Manage Codes"])
+        
+        with tab_refs:
+            st.subheader("Referral Performance Overview")
+            
+            # --- HELPER TO CALCULATE REFERRAL PERIODS ---
+            def calculate_periods(code):
+                now = datetime.datetime.now()
+                # Get all users referred by this code
+                refs = run_query("SELECT created_at FROM users WHERE referred_by=:c", {"c": code})
+                if refs.empty: return 0, 0, 0
+                
+                refs['created_at'] = pd.to_datetime(refs['created_at'], errors='coerce')
+                # Count based on time windows
+                d30 = refs[refs['created_at'] >= (now - datetime.timedelta(days=30))].shape[0]
+                d60 = refs[refs['created_at'] >= (now - datetime.timedelta(days=60))].shape[0]
+                lifetime = refs.shape[0]
+                return d30, d60, lifetime
+
+            # --- 1. AFFILIATE PERFORMANCE ---
+            st.markdown("#### 🏢 Affiliate Partners")
+            affiliates = run_query("SELECT username, referral_code FROM users WHERE subscription_status='Affiliate'")
+            
+            if not affiliates.empty:
+                aff_data = []
+                for _, row in affiliates.iterrows():
+                    d30, d60, life = calculate_periods(row['referral_code'])
+                    aff_data.append({
+                        "Partner": row['username'],
+                        "Code": row['referral_code'],
+                        "30 Days": d30, "60 Days": d60, "Lifetime": life,
+                        "Commission Due": f"${life * AFFILIATE_COMMISSION_PER_USER:,.2f}" # Simplified calc
+                    })
+                st.dataframe(pd.DataFrame(aff_data), use_container_width=True)
+            else: st.info("No affiliates found.")
+
+            st.markdown("---")
+            # --- 2. USER REFERRAL PERFORMANCE ---
+            st.markdown("#### 👤 Standard Users (Referral Program)")
+            # Find users who have referred at least one person
+            referrers = run_query("SELECT DISTINCT referred_by FROM users WHERE referred_by IS NOT NULL AND referred_by != ''")
+            if not referrers.empty:
+                user_ref_data = []
+                # Get list of affiliate codes to exclude them
+                aff_codes = affiliates['referral_code'].tolist() if not affiliates.empty else []
+                
+                for code in referrers['referred_by'].unique():
+                    if code in aff_codes: continue # Skip affiliates here
+                    
+                    # Find who owns this code
+                    owner = run_query("SELECT username FROM users WHERE referral_code=:c", {"c": code})
+                    owner_name = owner.iloc[0,0] if not owner.empty else "Unknown"
+                    
+                    d30, d60, life = calculate_periods(code)
+                    user_ref_data.append({"User": owner_name, "Code": code, "30 Days": d30, "Lifetime": life})
+                
+                if user_ref_data:
+                    st.dataframe(pd.DataFrame(user_ref_data), use_container_width=True)
+                else: st.info("No user-to-user referrals yet.")
+            else: st.info("No referrals found.")
+
+        with tab_activity:
+            st.subheader("🔥 Most Active Users (Engagement)")
+            
+            # Helper to count activity by user over X days
+            def get_activity_counts(days):
+                cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+                
+                # Queries for Projects, Invoices, Payments created after cutoff
+                # Note: This assumes you have 'created_at' or equivalent in these tables. 
+                # Since schema implies only 'issue_date' or 'start_date', we use those as proxies.
+                
+                sql_proj = "SELECT user_id, COUNT(*) as cnt FROM projects WHERE start_date >= :d GROUP BY user_id"
+                sql_inv = "SELECT user_id, COUNT(*) as cnt FROM invoices WHERE issue_date >= :d GROUP BY user_id"
+                sql_pay = "SELECT user_id, COUNT(*) as cnt FROM payments WHERE payment_date >= :d GROUP BY user_id"
+                
+                df_p = run_query(sql_proj, {"d": cutoff})
+                df_i = run_query(sql_inv, {"d": cutoff})
+                df_pay = run_query(sql_pay, {"d": cutoff})
+                
+                # Merge logic
+                activity = {}
+                for df, label in [(df_p, 'Projects'), (df_i, 'Invoices'), (df_pay, 'Payments')]:
+                    if not df.empty:
+                        for _, r in df.iterrows():
+                            uid = r['user_id']
+                            if uid not in activity: activity[uid] = {'Projects':0, 'Invoices':0, 'Payments':0}
+                            activity[uid][label] = r['cnt']
+                
+                # Convert to DataFrame and fetch usernames
+                final_rows = []
+                for uid, counts in activity.items():
+                    u_name = run_query("SELECT username FROM users WHERE id=:id", {"id": uid}).iloc[0,0]
+                    final_rows.append({"User": u_name, **counts, "Total Actions": sum(counts.values())})
+                
+                return pd.DataFrame(final_rows).sort_values("Total Actions", ascending=False)
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("##### Past 7 Days")
+                df_7 = get_activity_counts(7)
+                if not df_7.empty: st.dataframe(df_7, use_container_width=True)
+                else: st.info("No activity in last 7 days.")
+            
+            with c2:
+                st.markdown("##### Past 30 Days")
+                df_30 = get_activity_counts(30)
+                if not df_30.empty: st.dataframe(df_30, use_container_width=True)
+                else: st.info("No activity in last 30 days.")
+
+        with tab_alerts:
+            st.subheader("⚠️ At-Risk / Incomplete Setup")
+            st.caption("Users who are using the app but missing key profile data.")
+            
+            # Logic: Find users with >0 invoices but NULL logo or company name
+            risk_users = run_query("""
+                SELECT u.username, u.company_name, u.email, COUNT(i.id) as inv_count 
+                FROM users u 
+                JOIN invoices i ON u.id = i.user_id 
+                WHERE (u.company_name IS NULL OR u.company_name = '' OR u.logo_data IS NULL)
+                GROUP BY u.id
+            """)
+            
+            if not risk_users.empty:
+                for _, row in risk_users.iterrows():
+                    st.warning(f"**{row['username']}** ({row['email']})")
+                    st.write(f"- Has created **{row['inv_count']} invoices** but missing Company Info/Logo.")
+            else:
+                st.success("✅ All active users have completed their profiles!")
+
+        with tab_manage:
+            st.subheader("Create New Affiliate")
+            with st.form("new_affiliate_admin"):
+                aff_name = st.text_input("Affiliate Name (Internal ID)")
+                aff_code = st.text_input("Custom Referral Code (e.g., INFLUENCER20)")
+                submitted_aff = st.form_submit_button("Generate Code")
+                if submitted_aff:
+                    aff_name_clean = aff_name.lower().strip()
+                    fake_email = f"{aff_name_clean.replace(' ', '')}@affiliate.com"
+                    fake_pass = hash_password("affiliate_dummy_pass")
+                    try:
+                        execute_statement("INSERT INTO users (username, password, email, referral_code, subscription_status) VALUES (:u, :p, :e, :rc, 'Affiliate')", params={"u": aff_name_clean, "p": fake_pass, "e": fake_email, "rc": aff_code})
+                        st.success(f"Affiliate Created: Code **{aff_code}** is live!")
+                    except Exception as e: st.error(f"Error (Code likely taken): {e}")
 
     elif page == "Dashboard":
         st.title("Financial Overview")
