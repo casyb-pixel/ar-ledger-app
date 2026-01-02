@@ -16,32 +16,15 @@ from PIL import Image
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
-import streamlit as st
+import streamlit.components.v1 as components # Required for Google Ads
 
-# Inject Google tag
-google_tag = """
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-Z6JKSNFPE3"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-Z6JKSNFPE3');
-</script>
-"""
-
-st.markdown(google_tag, unsafe_allow_html=True)
-
-# --- 1. SAFE IMPORTS (Must be at the top) ---
-
-# Try to import Spellchecker
+# 1. SAFE IMPORTS
 try:
     from spellchecker import SpellChecker
     SPELLCHECK_AVAILABLE = True
 except ImportError:
     SPELLCHECK_AVAILABLE = False
 
-# Try to import Cookie Manager
 try:
     import extra_streamlit_components as stx
     COOKIE_MANAGER_AVAILABLE = True
@@ -60,6 +43,19 @@ st.set_page_config(
     layout="wide", 
     initial_sidebar_state="auto"
 )
+
+# --- GOOGLE ADS TRACKING CODE ---
+# This injects the tracking script securely into the app
+components.html("""
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-Z6JK5NFPE3"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-Z6JK5NFPE3');
+    </script>
+""", height=0)
 
 # --- ADMIN & CONSTANTS ---
 ADMIN_USERNAME = "admin" 
@@ -204,7 +200,7 @@ def run_spell_check(text):
 def metric_card(title, value, subtext=""):
     st.markdown(f"""<div class="dashboard-card"><div class="card-title">{title}</div><div class="card-value">{value}</div><div class="card-sub">{subtext}</div></div>""", unsafe_allow_html=True)
 
-# --- CLEAN TEXT FUNCTION (Fixes PDF Crash) ---
+# --- CLEAN TEXT FUNCTION ---
 def clean_text(text):
     """Replaces smart quotes and non-latin chars to prevent PDF crashes."""
     if not text: return ""
