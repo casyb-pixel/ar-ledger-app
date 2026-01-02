@@ -16,6 +16,21 @@ from PIL import Image
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
+import streamlit as st
+
+# Inject Google tag
+google_tag = """
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-Z6JKSNFPE3"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-Z6JKSNFPE3');
+</script>
+"""
+
+st.markdown(google_tag, unsafe_allow_html=True)
 
 # --- 1. SAFE IMPORTS (Must be at the top) ---
 
