@@ -17,14 +17,16 @@ from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
-# 1. TRY TO IMPORT SPELLCHECKER
+# --- 1. SAFE IMPORTS (Must be at the top) ---
+
+# Try to import Spellchecker
 try:
     from spellchecker import SpellChecker
     SPELLCHECK_AVAILABLE = True
 except ImportError:
     SPELLCHECK_AVAILABLE = False
 
-# 2. TRY TO IMPORT COOKIE MANAGER
+# Try to import Cookie Manager
 try:
     import extra_streamlit_components as stx
     COOKIE_MANAGER_AVAILABLE = True
@@ -34,7 +36,7 @@ except ImportError:
 # Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
 
-# --- CONFIGURATION & BRANDING ---
+# --- 2. CONFIGURATION ---
 fav_icon = "favicon.png" if os.path.exists("favicon.png") else None
 
 st.set_page_config(
@@ -44,11 +46,15 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# --- ADMIN CONFIGURATION ---
+# --- ADMIN & CONSTANTS ---
 ADMIN_USERNAME = "admin" 
 AFFILIATE_COMMISSION_PER_USER = 10.00 
+STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
+BASE_PRICE = 29.99 
+BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
+TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
-# --- CUSTOM CSS ---
+# --- 3. CUSTOM CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #f4f6f9; color: #000000 !important; }
@@ -76,7 +82,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- STRIPE SETUP ---
+# --- 4. STRIPE & DB SETUP ---
 if "STRIPE_SECRET_KEY" in st.secrets:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
     STRIPE_PUBLISHABLE_KEY = st.secrets.get("STRIPE_PUBLISHABLE_KEY", "")
@@ -84,12 +90,6 @@ else:
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_fallback")
     STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_fallback")
 
-STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
-BASE_PRICE = 29.99 
-BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
-TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
-
-# --- DATABASE ENGINE ---
 @st.cache_resource
 def get_engine():
     try:
@@ -145,7 +145,7 @@ def init_db():
 
 init_db()
 
-# --- HELPER FUNCTIONS ---
+# --- 5. HELPER FUNCTIONS ---
 def hash_password(password):
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
@@ -189,7 +189,7 @@ def run_spell_check(text):
 def metric_card(title, value, subtext=""):
     st.markdown(f"""<div class="dashboard-card"><div class="card-title">{title}</div><div class="card-value">{value}</div><div class="card-sub">{subtext}</div></div>""", unsafe_allow_html=True)
 
-# --- SANITIZE TEXT FOR PDF ---
+# --- CLEAN TEXT FUNCTION (Fixes PDF Crash) ---
 def clean_text(text):
     """Replaces smart quotes and non-latin chars to prevent PDF crashes."""
     if not text: return ""
@@ -300,7 +300,7 @@ def create_stripe_customer(email, name):
     try: return stripe.Customer.create(email=email, name=name).id
     except: return None
 
-# --- APP LOGIC & NAVIGATION ---
+# --- 6. APP LOGIC & NAVIGATION ---
 if 'user_id' not in st.session_state: st.session_state.user_id = None
 if 'username' not in st.session_state: st.session_state.username = ""
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
@@ -310,17 +310,26 @@ cookie_manager = None
 if COOKIE_MANAGER_AVAILABLE:
     cookie_manager = stx.CookieManager()
 
-# --- CHECK COOKIES FOR AUTO-LOGIN ---
+# --- AUTO-LOGIN VIA COOKIES ---
 if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE:
+    # Small delay to ensure cookie manager is ready
+    time.sleep(0.1)
     cookies = cookie_manager.get_all()
     user_cookie = cookies.get("progressbill_user")
+    
     if user_cookie:
         df_cookie = run_query("SELECT id, username, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": user_cookie})
         if not df_cookie.empty:
             rec = df_cookie.iloc[0]
-            st.session_state.user_id = int(rec['id']); st.session_state.username = rec['username']; st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
+            st.session_state.user_id = int(rec['id'])
+            st.session_state.username = rec['username']
+            st.session_state.sub_status = rec['subscription_status']
+            st.session_state.stripe_cid = rec['stripe_customer_id']
+            st.session_state.created_at = rec['created_at']
+            st.session_state.my_ref_code = rec['referral_code']
             st.rerun()
 
+# --- LOGIN / SIGNUP SCREENS ---
 if st.session_state.user_id is None:
     if os.path.exists("BB_logo.png"): st.image("BB_logo.png", width=200)
     else: st.title("ProgressBill Pro"); st.caption("Powered by Balance & Build Consulting")
@@ -336,9 +345,16 @@ if st.session_state.user_id is None:
                 if not df.empty:
                     rec = df.iloc[0]
                     if check_password(p, rec['password']):
-                        st.session_state.user_id = int(rec['id']); st.session_state.username = u; st.session_state.sub_status = rec['subscription_status']; st.session_state.stripe_cid = rec['stripe_customer_id']; st.session_state.created_at = rec['created_at']; st.session_state.my_ref_code = rec['referral_code']
+                        st.session_state.user_id = int(rec['id'])
+                        st.session_state.username = u
+                        st.session_state.sub_status = rec['subscription_status']
+                        st.session_state.stripe_cid = rec['stripe_customer_id']
+                        st.session_state.created_at = rec['created_at']
+                        st.session_state.my_ref_code = rec['referral_code']
+                        
                         if remember and COOKIE_MANAGER_AVAILABLE:
                             cookie_manager.set("progressbill_user", u, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+                        
                         st.success("Login successful!"); st.rerun()
                     else: st.error("Incorrect password")
                 else: st.error("Username not found")
@@ -368,9 +384,11 @@ if st.session_state.user_id is None:
                 else: st.warning("Please fill all fields")
 
 else:
+    # --- LOGGED IN USER CONTEXT ---
     user_id = st.session_state.user_id
     curr_username = st.session_state.username
     
+    # Reload Context
     df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty: st.session_state.clear(); st.rerun()
     row = df_user.iloc[0]
@@ -389,6 +407,7 @@ else:
             if days_left > 0: trial_active = True
         except: pass
     
+    # --- SUBSCRIPTION CHECKS ---
     if status == 'Affiliate':
         st.warning("⚠️ This is an Affiliate Account. Access restricted to API tracking only.")
         if st.button("Logout"): 
@@ -419,6 +438,7 @@ else:
 
     if trial_active and curr_username != ADMIN_USERNAME: st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Total Discount: {total_discount}%")
 
+    # --- SIDEBAR MENU ---
     with st.sidebar:
         if logo: st.image(logo, width=120)
         else: st.header("Menu")
@@ -445,91 +465,56 @@ else:
 
     page = st.session_state.page
     
-    # --- UPDATED ADMIN DASHBOARD ---
+    # --- ADMIN DASHBOARD ---
     if curr_username == ADMIN_USERNAME and page == "Admin Dashboard":
         st.title("📊 Admin & Affiliate Intelligence")
-        
         tab_refs, tab_activity, tab_alerts, tab_manage = st.tabs(["📈 Referral Stats", "🔥 User Activity", "⚠️ Alerts", "⚙️ Manage Codes"])
         
         with tab_refs:
             st.subheader("Referral Performance Overview")
-            
-            # --- HELPER TO CALCULATE REFERRAL PERIODS ---
             def calculate_periods(code):
                 now = datetime.datetime.now()
-                # Get all users referred by this code
                 refs = run_query("SELECT created_at FROM users WHERE referred_by=:c", {"c": code})
                 if refs.empty: return 0, 0, 0
-                
                 refs['created_at'] = pd.to_datetime(refs['created_at'], errors='coerce')
-                # Count based on time windows
                 d30 = refs[refs['created_at'] >= (now - datetime.timedelta(days=30))].shape[0]
                 d60 = refs[refs['created_at'] >= (now - datetime.timedelta(days=60))].shape[0]
-                lifetime = refs.shape[0]
-                return d30, d60, lifetime
+                return d30, d60, refs.shape[0]
 
-            # --- 1. AFFILIATE PERFORMANCE ---
             st.markdown("#### 🏢 Affiliate Partners")
             affiliates = run_query("SELECT username, referral_code FROM users WHERE subscription_status='Affiliate'")
-            
             if not affiliates.empty:
                 aff_data = []
                 for _, row in affiliates.iterrows():
                     d30, d60, life = calculate_periods(row['referral_code'])
-                    aff_data.append({
-                        "Partner": row['username'],
-                        "Code": row['referral_code'],
-                        "30 Days": d30, "60 Days": d60, "Lifetime": life,
-                        "Commission Due": f"${life * AFFILIATE_COMMISSION_PER_USER:,.2f}" # Simplified calc
-                    })
+                    aff_data.append({"Partner": row['username'], "Code": row['referral_code'], "30 Days": d30, "60 Days": d60, "Lifetime": life, "Commission Due": f"${life * AFFILIATE_COMMISSION_PER_USER:,.2f}"})
                 st.dataframe(pd.DataFrame(aff_data), use_container_width=True)
             else: st.info("No affiliates found.")
 
             st.markdown("---")
-            # --- 2. USER REFERRAL PERFORMANCE ---
             st.markdown("#### 👤 Standard Users (Referral Program)")
-            # Find users who have referred at least one person
             referrers = run_query("SELECT DISTINCT referred_by FROM users WHERE referred_by IS NOT NULL AND referred_by != ''")
             if not referrers.empty:
                 user_ref_data = []
-                # Get list of affiliate codes to exclude them
                 aff_codes = affiliates['referral_code'].tolist() if not affiliates.empty else []
-                
                 for code in referrers['referred_by'].unique():
-                    if code in aff_codes: continue # Skip affiliates here
-                    
-                    # Find who owns this code
+                    if code in aff_codes: continue
                     owner = run_query("SELECT username FROM users WHERE referral_code=:c", {"c": code})
                     owner_name = owner.iloc[0,0] if not owner.empty else "Unknown"
-                    
                     d30, d60, life = calculate_periods(code)
                     user_ref_data.append({"User": owner_name, "Code": code, "30 Days": d30, "Lifetime": life})
-                
-                if user_ref_data:
-                    st.dataframe(pd.DataFrame(user_ref_data), use_container_width=True)
+                if user_ref_data: st.dataframe(pd.DataFrame(user_ref_data), use_container_width=True)
                 else: st.info("No user-to-user referrals yet.")
             else: st.info("No referrals found.")
 
         with tab_activity:
             st.subheader("🔥 Most Active Users (Engagement)")
-            
-            # Helper to count activity by user over X days
             def get_activity_counts(days):
                 cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
-                
-                # Queries for Projects, Invoices, Payments created after cutoff
-                # Note: This assumes you have 'created_at' or equivalent in these tables. 
-                # Since schema implies only 'issue_date' or 'start_date', we use those as proxies.
-                
                 sql_proj = "SELECT user_id, COUNT(*) as cnt FROM projects WHERE start_date >= :d GROUP BY user_id"
                 sql_inv = "SELECT user_id, COUNT(*) as cnt FROM invoices WHERE issue_date >= :d GROUP BY user_id"
                 sql_pay = "SELECT user_id, COUNT(*) as cnt FROM payments WHERE payment_date >= :d GROUP BY user_id"
-                
-                df_p = run_query(sql_proj, {"d": cutoff})
-                df_i = run_query(sql_inv, {"d": cutoff})
-                df_pay = run_query(sql_pay, {"d": cutoff})
-                
-                # Merge logic
+                df_p = run_query(sql_proj, {"d": cutoff}); df_i = run_query(sql_inv, {"d": cutoff}); df_pay = run_query(sql_pay, {"d": cutoff})
                 activity = {}
                 for df, label in [(df_p, 'Projects'), (df_i, 'Invoices'), (df_pay, 'Payments')]:
                     if not df.empty:
@@ -537,14 +522,14 @@ else:
                             uid = r['user_id']
                             if uid not in activity: activity[uid] = {'Projects':0, 'Invoices':0, 'Payments':0}
                             activity[uid][label] = r['cnt']
-                
-                # Convert to DataFrame and fetch usernames
                 final_rows = []
                 for uid, counts in activity.items():
-                    u_name = run_query("SELECT username FROM users WHERE id=:id", {"id": uid}).iloc[0,0]
-                    final_rows.append({"User": u_name, **counts, "Total Actions": sum(counts.values())})
-                
-                return pd.DataFrame(final_rows).sort_values("Total Actions", ascending=False)
+                    # SAFE LOOKUP: Check if user exists before grabbing name
+                    u_res = run_query("SELECT username FROM users WHERE id=:id", {"id": uid})
+                    if not u_res.empty:
+                        u_name = u_res.iloc[0,0]
+                        final_rows.append({"User": u_name, **counts, "Total Actions": sum(counts.values())})
+                return pd.DataFrame(final_rows).sort_values("Total Actions", ascending=False) if final_rows else pd.DataFrame()
 
             c1, c2 = st.columns(2)
             with c1:
@@ -552,7 +537,6 @@ else:
                 df_7 = get_activity_counts(7)
                 if not df_7.empty: st.dataframe(df_7, use_container_width=True)
                 else: st.info("No activity in last 7 days.")
-            
             with c2:
                 st.markdown("##### Past 30 Days")
                 df_30 = get_activity_counts(30)
@@ -561,23 +545,12 @@ else:
 
         with tab_alerts:
             st.subheader("⚠️ At-Risk / Incomplete Setup")
-            st.caption("Users who are using the app but missing key profile data.")
-            
-            # Logic: Find users with >0 invoices but NULL logo or company name
-            risk_users = run_query("""
-                SELECT u.username, u.company_name, u.email, COUNT(i.id) as inv_count 
-                FROM users u 
-                JOIN invoices i ON u.id = i.user_id 
-                WHERE (u.company_name IS NULL OR u.company_name = '' OR u.logo_data IS NULL)
-                GROUP BY u.id
-            """)
-            
+            risk_users = run_query("SELECT u.username, u.company_name, u.email, COUNT(i.id) as inv_count FROM users u JOIN invoices i ON u.id = i.user_id WHERE (u.company_name IS NULL OR u.company_name = '' OR u.logo_data IS NULL) GROUP BY u.id")
             if not risk_users.empty:
                 for _, row in risk_users.iterrows():
                     st.warning(f"**{row['username']}** ({row['email']})")
                     st.write(f"- Has created **{row['inv_count']} invoices** but missing Company Info/Logo.")
-            else:
-                st.success("✅ All active users have completed their profiles!")
+            else: st.success("✅ All active users have completed their profiles!")
 
         with tab_manage:
             st.subheader("Create New Affiliate")
