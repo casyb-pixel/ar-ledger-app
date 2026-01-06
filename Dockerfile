@@ -14,4 +14,5 @@ COPY . .
 # Expose Port 8080
 EXPOSE 8080
 
-CMD ["streamlit", "run", "ar_ledger_app.py"]
+
+CMD mkdir -p .streamlit && cp /etc/secrets/secrets.toml .streamlit/secrets.toml && streamlit run ar_ledger_app.py
