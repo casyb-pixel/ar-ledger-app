@@ -522,7 +522,7 @@ if st.session_state.user_id is None:
                         except Exception as e:
                             st.error(f"Invalid Code or Error: {e}")
 
-    # --- TAB 2: SIGNUP ---
+        # --- TAB 2: SIGNUP ---
     with tab2:
         st.header("Create New Account")
         st.caption("Start your 30-Day Free Trial")
@@ -579,17 +579,14 @@ else:
     curr_username = st.session_state.username
     
     # Reload Context
-    # FIX: Added 'terms_conditions' to the SELECT query so the PDF generator can find it
-    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
+    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty:
         st.session_state.clear()
         st.rerun()
     
     row = df_user.iloc[0]
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
-    
-    # FIX: Unpack 'terms_conditions' into the variable 'terms'
-    c_name, c_addr, logo, terms = row['company_name'], row['company_address'], row['logo_data'], row['terms_conditions']
+    c_name, c_addr, logo = row['company_name'], row['company_address'], row['logo_data']
     
     # --- PRICING & SUBSCRIPTION LOGIC ---
     active_referrals, discount_percent_earned = get_referral_stats(my_code)
@@ -658,13 +655,6 @@ else:
                     st.link_button(f"👉 Subscribe for ${final_price:.2f}/mo", url, type="primary")
                 else:
                     st.error("Error connecting to Stripe.")
-
-                    conversion_script = """
-                    <script>
-                      rewardful('convert', { email: 'CUSTOMER_EMAIL_HERE' });
-                    </script>
-                    """
-st.markdown(conversion_script.replace('CUSTOMER_EMAIL_HERE', user_email), unsafe_allow_html=True)  # Replace user_email with your variable
             
         st.markdown("---")
         if st.button("Logout"):
