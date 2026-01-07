@@ -41,6 +41,13 @@ except ImportError:
 # Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
 
+rewardful_script = """
+<!-- Rewardful Tracking Script -->
+<script>(function(w,r){w._rwq=r;w[r]=w[r]||function(){(w[r].q=w[r].q||[]).push(arguments)}})(window,'rewardful');</script>
+<script async src='https://r.wdfl.co/rw.js' data-rewardful='48a8b0'></script>
+"""
+st.markdown(rewardful_script, unsafe_allow_html=True)
+
 # --- 2. CONFIGURATION ---
 fav_icon = "favicon.png" if os.path.exists("favicon.png") else None
 
@@ -651,6 +658,13 @@ else:
                     st.link_button(f"👉 Subscribe for ${final_price:.2f}/mo", url, type="primary")
                 else:
                     st.error("Error connecting to Stripe.")
+
+                    conversion_script = """
+                    <script>
+                      rewardful('convert', { email: 'CUSTOMER_EMAIL_HERE' });
+                    </script>
+                    """
+st.markdown(conversion_script.replace('CUSTOMER_EMAIL_HERE', user_email), unsafe_allow_html=True)  # Replace user_email with your variable
             
         st.markdown("---")
         if st.button("Logout"):
@@ -1002,4 +1016,5 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
 
