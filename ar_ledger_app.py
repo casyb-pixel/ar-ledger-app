@@ -31,7 +31,7 @@ try:
 except ImportError:
     COOKIE_MANAGER_AVAILABLE = False
 
-# Import Supabase Client (REQUIRED for Auth)
+# Import Supabase Client
 try:
     from supabase import create_client, Client
     SUPABASE_AVAILABLE = True
@@ -51,22 +51,39 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# --- GOOGLE ADS TRACKING ---
-components.html("""
+# --- REWARDFUL AFFILIATE TRACKING & GOOGLE ADS ---
+REWARDFUL_API_KEY = "48a8b0" 
+
+components.html(f"""
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-Z6JK5NFPE3"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
+      function gtag(){{dataLayer.push(arguments);}}
       gtag('js', new Date());
       gtag('config', 'G-Z6JK5NFPE3');
     </script>
+
+    <script>
+    (function(w,r){{w._rwq=r;w[r]=w[r]||function(){{(w[r].q=w[r].q||[]).push(arguments)}};
+    w[r].q=w[r].q||[];}})(window,'rewardful');
+    rewardful('set', 'publisher_id', '{REWARDFUL_API_KEY}');
+    rewardful('ready', function() {{
+        console.log("Rewardful Ready");
+    }});
+    </script>
+    <script async src='https://r.wdfl.co/rw.js' data-rewardful='{REWARDFUL_API_KEY}'></script>
 """, height=0)
 
 # --- ADMIN & CONSTANTS ---
 ADMIN_USERNAME = "admin" 
-AFFILIATE_COMMISSION_PER_USER = 10.00 
+BASE_PRICE = 99.00 
+
+# UPDATED: Commission is 25% of $99.00
+AFFILIATE_COMMISSION_PER_USER = 24.75 
+
+# UPDATED: Stripe Price Key
 STRIPE_PRICE_LOOKUP_KEY = "pro_monthly_99" 
-BASE_PRICE = 99.00  # Updated to $99 as requested
+
 BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
@@ -116,12 +133,11 @@ def get_engine():
         db_url = st.secrets["connections"]["supabase"]["url"]
         return create_engine(db_url, poolclass=NullPool)
     except Exception as e:
-        # Fallback for when secrets.toml isn't mounted yet
         return None
 
 engine = get_engine()
 
-# C. Supabase Auth Client (New!)
+# C. Supabase Auth Client
 @st.cache_resource
 def init_supabase():
     try:
@@ -323,27 +339,26 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
         else: pdf.set_font("Arial", "I", 10); pdf.text(x=130, y=pdf.get_y() + 20, txt="No contracts active.")
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
-def create_checkout_session(customer_id, discount_percent):
+def create_checkout_session(customer_id, discount_percent, referral_id=None):
     try:
-        # Note: 'price_data' is better if you want dynamic pricing, 
-        # but using 'price' ID is standard if you pre-defined it in Stripe.
-        # Here we attempt to create a session for the $99 price.
-        # If you have a coupon, you'd apply 'discounts': [{'coupon': '...'}]
-        # For simplicity, we are just creating the session here.
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
         if not prices.data: return None, "Price Not Found in Stripe"
         
-        # Apply discount logic if needed (requires Stripe Coupon ID logic usually)
-        # session_args = ...
+        # Build the session arguments
+        session_args = {
+            'customer': customer_id,
+            'payment_method_types': ['card'],
+            'line_items': [{'price': prices.data[0].id, 'quantity': 1}],
+            'mode': 'subscription',
+            'success_url': 'https://progressbillpro.com',
+            'cancel_url': 'https://progressbillpro.com'
+        }
         
-        session = stripe.checkout.Session.create(
-            customer=customer_id,
-            payment_method_types=['card'],
-            line_items=[{'price': prices.data[0].id, 'quantity': 1}],
-            mode='subscription',
-            success_url='https://progressbillpro.com',
-            cancel_url='https://progressbillpro.com'
-        )
+        # --- PASS REWARDFUL ID TO STRIPE ---
+        if referral_id:
+            session_args['client_reference_id'] = referral_id
+            
+        session = stripe.checkout.Session.create(**session_args)
         return session.url, None
     except Exception as e: return None, str(e)
 
@@ -527,7 +542,7 @@ else:
     user_id = st.session_state.user_id
     curr_username = st.session_state.username
     
-    # Reload Context (FIXED: Now includes logo_data, company_name)
+    # Reload Context
     df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty:
         st.session_state.clear()
@@ -589,7 +604,22 @@ else:
                 st.rerun()
         else:
             if st.session_state.stripe_cid:
-                url, err = create_checkout_session(st.session_state.stripe_cid, total_discount)
+                # 1. Capture Rewardful Referral ID from Cookie or URL
+                rewardful_id = None
+                
+                # Check Query Params first
+                if "via" in st.query_params:
+                    # Capture query param if present
+                    pass 
+
+                # Check Cookie (Best method)
+                if COOKIE_MANAGER_AVAILABLE:
+                    cookies = cookie_manager.get_all()
+                    rewardful_id = cookies.get("rewardful.referral")
+
+                # 2. Create Checkout Session with Referral ID
+                url, err = create_checkout_session(st.session_state.stripe_cid, total_discount, referral_id=rewardful_id)
+                
                 if url:
                     st.link_button(f"👉 Subscribe for ${final_price:.2f}/mo", url, type="primary")
                 else:
