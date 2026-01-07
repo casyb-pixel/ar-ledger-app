@@ -342,113 +342,235 @@ if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE:
 
 # --- LOGIN / SIGNUP SCREENS ---
 if st.session_state.user_id is None:
-    if os.path.exists("BB_logo.png"): st.image("BB_logo.png", width=200)
-    else: st.title("ProgressBill Pro"); st.caption("Powered by Balance & Build Consulting")
-    tab1, tab2 = st.tabs(["Login", "Signup"])
+    if os.path.exists("BB_logo.png"):
+        st.image("BB_logo.png", width=200)
+    else:
+        st.title("ProgressBill Pro")
+        st.caption("Powered by Balance & Build Consulting")
+
+    # Tabs for Login and Signup
+    tab1, tab2 = st.tabs(["Login", "Signup (Start Free Trial)"])
+
+    # --- TAB 1: LOGIN (Password + OTP) ---
     with tab1:
-        with st.form("login_form"):
-            u = st.text_input("Username").lower().strip()
-            p = st.text_input("Password", type="password")
-            remember = st.checkbox("Remember Me (Keep me logged in)")
-            submitted = st.form_submit_button("Login")
-            if submitted:
-                df = run_query("SELECT id, password, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
-                if not df.empty:
-                    rec = df.iloc[0]
-                    if check_password(p, rec['password']):
-                        st.session_state.user_id = int(rec['id'])
-                        st.session_state.username = u
-                        st.session_state.sub_status = rec['subscription_status']
-                        st.session_state.stripe_cid = rec['stripe_customer_id']
-                        st.session_state.created_at = rec['created_at']
-                        st.session_state.my_ref_code = rec['referral_code']
+        login_mode = st.radio("Login Method:", ["Password", "Forgot Password / Login with Code"], label_visibility="collapsed")
+
+        # OPTION A: Standard Password Login
+        if login_mode == "Password":
+            with st.form("login_form"):
+                u = st.text_input("Username").lower().strip()
+                p = st.text_input("Password", type="password")
+                remember = st.checkbox("Remember Me (Keep me logged in)")
+                submitted = st.form_submit_button("Login")
+
+                if submitted:
+                    # Query your SQL Database
+                    df = run_query("SELECT id, password, email, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
+                    
+                    if not df.empty:
+                        rec = df.iloc[0]
+                        if check_password(p, rec['password']):
+                            # SUCCESS: Set Session State
+                            st.session_state.user_id = int(rec['id'])
+                            st.session_state.username = u
+                            st.session_state.email = rec['email']
+                            st.session_state.sub_status = rec['subscription_status']
+                            st.session_state.stripe_cid = rec['stripe_customer_id']
+                            st.session_state.created_at = rec['created_at']
+                            st.session_state.my_ref_code = rec['referral_code']
+                            
+                            if remember and COOKIE_MANAGER_AVAILABLE:
+                                cookie_manager.set("progressbill_user", u, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+                            
+                            st.success("Login successful!")
+                            st.rerun()
+                        else:
+                            st.error("Incorrect password")
+                    else:
+                        st.error("Username not found")
+
+        # OPTION B: OTP / Magic Code Login
+        else:
+            st.info("Enter your email. We will send a 6-digit code to log you in.")
+            email_otp = st.text_input("Email Address", key="otp_email")
+            
+            col_a, col_b = st.columns(2)
+            
+            # Button 1: Send Code
+            if col_a.button("Send Code"):
+                if email_otp:
+                    try:
+                        supabase.auth.sign_in_with_otp({"email": email_otp})
+                        st.success("Code sent! Check your email.")
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+                else:
+                    st.warning("Please enter an email.")
+
+            # Button 2: Verify & Connect to DB
+            otp_token = st.text_input("Enter 6-digit Code", key="otp_code")
+            if col_b.button("Verify & Login"):
+                if email_otp and otp_token:
+                    try:
+                        # 1. Verify with Supabase Auth
+                        res = supabase.auth.verify_otp({"email": email_otp, "token": otp_token, "type": "email"})
                         
-                        if remember and COOKIE_MANAGER_AVAILABLE:
-                            cookie_manager.set("progressbill_user", u, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+                        # 2. BRIDGE: Find this user in SQL Database via Email
+                        df = run_query("SELECT id, username, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE email=:e", params={"e": email_otp})
                         
-                        st.success("Login successful!"); st.rerun()
-                    else: st.error("Incorrect password")
-                else: st.error("Username not found")
+                        if not df.empty:
+                            rec = df.iloc[0]
+                            st.session_state.user_id = int(rec['id'])
+                            st.session_state.username = rec['username']
+                            st.session_state.email = email_otp
+                            st.session_state.sub_status = rec['subscription_status']
+                            st.session_state.stripe_cid = rec['stripe_customer_id']
+                            st.session_state.created_at = rec['created_at']
+                            st.session_state.my_ref_code = rec['referral_code']
+                            
+                            st.success("Verified! Logging you in...")
+                            st.rerun()
+                        else:
+                            st.error("Login verified, but we couldn't find your account details in the database.")
+                    except Exception as e:
+                        st.error(f"Invalid Code or Error: {e}")
+
+    # --- TAB 2: SIGNUP ---
     with tab2:
-        st.header("Create New Account"); st.caption("Start your 30-Day Free Trial")
+        st.header("Create New Account")
+        st.caption("Start your 30-Day Free Trial")
         with st.form("signup"):
             u = st.text_input("Username").lower().strip()
-            p = st.text_input("Password", type="password"); e = st.text_input("Email")
+            p = st.text_input("Password", type="password")
+            e = st.text_input("Email")
             ref_input = st.text_input("Referral/Affiliate Code (Optional)")
-            st.markdown("---"); st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
+            
+            st.markdown("---")
+            st.markdown(f"Please read the [Terms and Conditions]({TERMS_URL}) before signing up.")
             terms_agreed = st.checkbox("I acknowledge that I have read and agree to the Terms and Conditions.", value=False)
+            
             submitted_sign = st.form_submit_button("Create Account")
+            
             if submitted_sign:
-                if not terms_agreed: st.error("You must agree to the Terms and Conditions.")
+                if not terms_agreed:
+                    st.error("You must agree to the Terms and Conditions.")
                 elif u and p and e:
                     try:
                         check = run_query("SELECT id FROM users WHERE username=:u", params={"u": u})
-                        if not check.empty: st.error("Username already taken.")
+                        if not check.empty:
+                            st.error("Username already taken.")
                         else:
-                            h_p = hash_password(p); cid = create_stripe_customer(e, u)
+                            # 1. Register in Supabase Auth (Crucial for OTP support)
+                            try:
+                                supabase.auth.sign_up({"email": e, "password": p})
+                            except Exception as auth_err:
+                                # Start soft warning if user already exists in Auth but not DB
+                                print(f"Auth warning: {auth_err}")
+
+                            # 2. Register in SQL Database
+                            h_p = hash_password(p)
+                            cid = create_stripe_customer(e, u)
                             my_ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                             today_str = str(datetime.date.today())
-                            if ref_input: execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
-                            execute_statement("INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)", params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input})
+                            
+                            if ref_input:
+                                execute_statement("UPDATE users SET referral_count = referral_count + 1 WHERE referral_code=:c", params={"c": ref_input})
+                            
+                            execute_statement(
+                                "INSERT INTO users (username, password, email, stripe_customer_id, referral_code, created_at, subscription_status, referred_by) VALUES (:u, :p, :e, :cid, :rc, :ca, 'Trial', :rb)",
+                                params={"u": u, "p": h_p, "e": e, "cid": cid, "rc": my_ref_code, "ca": today_str, "rb": ref_input}
+                            )
                             st.success("Account Created! Please switch to Login tab.")
-                    except Exception as err: st.error(f"Error: {err}")
-                else: st.warning("Please fill all fields")
+                    except Exception as err:
+                        st.error(f"Error: {err}")
+                else:
+                    st.warning("Please fill all fields")
 
 else:
     # --- LOGGED IN USER CONTEXT ---
     user_id = st.session_state.user_id
     curr_username = st.session_state.username
     
-    # Reload Context
+    # Reload Context to check for status updates
     df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by FROM users WHERE id=:id", params={"id": user_id})
-    if df_user.empty: st.session_state.clear(); st.rerun()
+    if df_user.empty:
+        st.session_state.clear()
+        st.rerun()
+    
     row = df_user.iloc[0]
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
     
-    # --- PRICING LOGIC ---
+    # --- PRICING & SUBSCRIPTION LOGIC ---
+    # 1. Calculate Discounts
     active_referrals, discount_percent_earned = get_referral_stats(my_code)
     discount_from_affiliate = 10 if referred_by else 0
     total_discount = min(discount_percent_earned + discount_from_affiliate, 100)
     
-    days_left = 0; trial_active = False
+    # 2. Base Price
+    BASE_PRICE = 99.00
+    final_price = BASE_PRICE * (1 - (total_discount / 100))
+
+    # 3. Check Trial Status
+    days_left = 0
+    trial_active = False
     if status == 'Trial' and created_at_str:
         try:
             start_date = datetime.datetime.strptime(created_at_str, '%Y-%m-%d').date()
             days_left = 30 - (datetime.date.today() - start_date).days
-            if days_left > 0: trial_active = True
-        except: pass
+            if days_left > 0:
+                trial_active = True
+        except:
+            pass
     
-    # --- SUBSCRIPTION CHECKS ---
+    # --- AFFILIATE VIEW ---
     if status == 'Affiliate':
         st.warning("⚠️ This is an Affiliate Account. Access restricted to API tracking only.")
         if st.button("Logout"): 
             if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-            st.session_state.clear(); st.rerun()
+            st.session_state.clear()
+            st.rerun()
         st.stop()
 
+    # --- SUBSCRIPTION ENFORCEMENT ---
+    # Block access if Trial is over AND not Active AND not Admin
     if status != 'Active' and not trial_active and curr_username != ADMIN_USERNAME:
+        st.markdown("## 🔒 Subscription Required")
+        st.error("Your Free Trial has expired.")
+        
+        # Pricing Explanation Card
+        st.divider()
+        st.subheader("Plan Details")
+        col_p1, col_p2, col_p3 = st.columns(3)
+        col_p1.metric("Base Price", f"${BASE_PRICE:.2f}/mo")
+        col_p2.metric("Your Discount", f"{total_discount}%", help=f"{active_referrals} Active Referrals + Signup Bonus")
+        col_p3.metric("Your Final Price", f"${final_price:.2f}/mo")
+        
+        st.caption(f"Pricing is dynamic! Refer more users to lower your bill. You have {active_referrals} active referrals.")
+        st.divider()
+
         if total_discount >= 100:
-            st.balloons(); st.success("🎉 You have earned FREE ACCESS via Referrals!")
+            st.balloons()
+            st.success("🎉 You have earned FREE ACCESS via Referrals!")
             if st.button("Activate Free Lifetime Access"):
                 execute_statement("UPDATE users SET subscription_status='Active' WHERE id=:id", params={"id": user_id})
-                st.session_state.sub_status = 'Active'; st.rerun()
+                st.session_state.sub_status = 'Active'
+                st.rerun()
         else:
-            st.warning(f"⚠️ Trial Expired. Current Discount: {total_discount}%")
+            # Payment Button
             if st.session_state.stripe_cid:
+                # We pass the 'total_discount' to helper so Stripe creates a coupon or adjusted price
                 url, err = create_checkout_session(st.session_state.stripe_cid, total_discount)
-                if url: st.link_button("Subscribe Now", url)
-            if st.button("Logout"):
-                if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-                st.session_state.clear(); st.rerun()
-            st.stop()
-
-    df_full = run_query("SELECT logo_data, company_name, company_address, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
-    u_data = df_full.iloc[0]
-    logo, c_name, c_addr, terms = u_data['logo_data'], u_data['company_name'], u_data['company_address'], u_data['terms_conditions']
-    if isinstance(logo, memoryview): logo = logo.tobytes()
-
-    if trial_active and curr_username != ADMIN_USERNAME: st.info(f"✨ Free Trial Active: {days_left} Days Remaining | Total Discount: {total_discount}%")
-
+                if url:
+                    st.link_button(f"👉 Subscribe for ${final_price:.2f}/mo", url, type="primary")
+                else:
+                    st.error("Error connecting to Stripe. Please try again later.")
+            
+        st.markdown("---")
+        if st.button("Logout"):
+            if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
+            st.session_state.clear()
+            st.rerun()
+        st.stop()
     # --- SIDEBAR MENU ---
     with st.sidebar:
         if logo: st.image(logo, width=120)
