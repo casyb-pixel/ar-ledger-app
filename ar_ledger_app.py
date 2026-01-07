@@ -16,9 +16,9 @@ from PIL import Image
 from fpdf import FPDF
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
-import streamlit.components.v1 as components # Required for Google Ads
+import streamlit.components.v1 as components 
 
-# 1. SAFE IMPORTS
+# --- 1. SAFE IMPORTS ---
 try:
     from spellchecker import SpellChecker
     SPELLCHECK_AVAILABLE = True
@@ -30,6 +30,13 @@ try:
     COOKIE_MANAGER_AVAILABLE = True
 except ImportError:
     COOKIE_MANAGER_AVAILABLE = False
+
+# Import Supabase Client (REQUIRED for Auth)
+try:
+    from supabase import create_client, Client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
 
 # Set Matplotlib to non-interactive mode
 matplotlib.use('Agg')
@@ -44,15 +51,13 @@ st.set_page_config(
     initial_sidebar_state="auto"
 )
 
-# --- GOOGLE ADS TRACKING CODE ---
-# This injects the tracking script securely into the app
+# --- GOOGLE ADS TRACKING ---
 components.html("""
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-Z6JK5NFPE3"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-
       gtag('config', 'G-Z6JK5NFPE3');
     </script>
 """, height=0)
@@ -61,7 +66,7 @@ components.html("""
 ADMIN_USERNAME = "admin" 
 AFFILIATE_COMMISSION_PER_USER = 10.00 
 STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
-BASE_PRICE = 29.99 
+BASE_PRICE = 99.00  # Updated to $99 as requested
 BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
 
@@ -93,7 +98,9 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. STRIPE & DB SETUP ---
+# --- 4. CONNECTIONS SETUP ---
+
+# A. Stripe
 if "STRIPE_SECRET_KEY" in st.secrets:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
     STRIPE_PUBLISHABLE_KEY = st.secrets.get("STRIPE_PUBLISHABLE_KEY", "")
@@ -101,18 +108,36 @@ else:
     stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_fallback")
     STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "pk_test_fallback")
 
+# B. Database (SQLAlchemy)
 @st.cache_resource
 def get_engine():
     try:
+        # Tries to get from secrets, falls back to env var if needed
         db_url = st.secrets["connections"]["supabase"]["url"]
         return create_engine(db_url, poolclass=NullPool)
     except Exception as e:
-        st.error(f"Database Connection Failed: {e}")
+        # Fallback for when secrets.toml isn't mounted yet
         return None
 
 engine = get_engine()
 
+# C. Supabase Auth Client (New!)
+@st.cache_resource
+def init_supabase():
+    try:
+        url = st.secrets.get("SUPABASE_API_URL") or os.environ.get("SUPABASE_API_URL")
+        key = st.secrets.get("SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+        if url and key and SUPABASE_AVAILABLE:
+            return create_client(url, key)
+        return None
+    except:
+        return None
+
+supabase = init_supabase()
+
+# --- DATABASE FUNCTIONS ---
 def run_query(query, params=None):
+    if not engine: return pd.DataFrame()
     try:
         with engine.connect() as conn:
             return pd.read_sql(text(query), conn, params=params)
@@ -120,6 +145,7 @@ def run_query(query, params=None):
         return pd.DataFrame() 
 
 def execute_statement(query, params=None):
+    if not engine: return
     try:
         with engine.begin() as conn: 
             conn.execute(text(query), params)
@@ -128,6 +154,7 @@ def execute_statement(query, params=None):
         raise e
 
 def init_db():
+    if not engine: return
     try:
         with engine.begin() as conn:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS users (
@@ -200,7 +227,6 @@ def run_spell_check(text):
 def metric_card(title, value, subtext=""):
     st.markdown(f"""<div class="dashboard-card"><div class="card-title">{title}</div><div class="card-value">{value}</div><div class="card-sub">{subtext}</div></div>""", unsafe_allow_html=True)
 
-# --- CLEAN TEXT FUNCTION ---
 def clean_text(text):
     """Replaces smart quotes and non-latin chars to prevent PDF crashes."""
     if not text: return ""
@@ -212,7 +238,6 @@ def clean_text(text):
     for k, v in replacements.items(): text = text.replace(k, v)
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-# --- PDF GENERATOR CLASS ---
 class BB_PDF(FPDF):
     def footer(self):
         self.set_y(-15); self.set_font('Arial', 'I', 8); self.set_text_color(180, 180, 180); self.cell(0, 10, BB_WATERMARK, 0, 0, 'C')
@@ -226,9 +251,9 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
                 image.save(tmp, format="PNG"); tmp_path = tmp.name
             pdf.image(tmp_path, 10, 10, 35); os.unlink(tmp_path)
         except: pass
-    c_name = clean_text(company_info.get('name', '')); c_addr = clean_text(company_info.get('address', ''))
-    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, c_name, ln=1, align='R')
-    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, c_addr, align='R')
+    c_name_txt = clean_text(company_info.get('name', '')); c_addr_txt = clean_text(company_info.get('address', ''))
+    pdf.set_xy(120, 15); pdf.set_font("Arial", "B", 12); pdf.cell(0, 5, c_name_txt, ln=1, align='R')
+    pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, c_addr_txt, align='R')
     pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
@@ -300,10 +325,25 @@ def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
 
 def create_checkout_session(customer_id, discount_percent):
     try:
+        # Note: 'price_data' is better if you want dynamic pricing, 
+        # but using 'price' ID is standard if you pre-defined it in Stripe.
+        # Here we attempt to create a session for the $99 price.
+        # If you have a coupon, you'd apply 'discounts': [{'coupon': '...'}]
+        # For simplicity, we are just creating the session here.
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
-        if not prices.data: return None, "Price Not Found"
-        session_args = {'customer': customer_id, 'payment_method_types': ['card'], 'line_items': [{'price': prices.data[0].id, 'quantity': 1}], 'mode': 'subscription', 'success_url': 'https://example.com/success', 'cancel_url': 'https://example.com/cancel'}
-        session = stripe.checkout.Session.create(**session_args)
+        if not prices.data: return None, "Price Not Found in Stripe"
+        
+        # Apply discount logic if needed (requires Stripe Coupon ID logic usually)
+        # session_args = ...
+        
+        session = stripe.checkout.Session.create(
+            customer=customer_id,
+            payment_method_types=['card'],
+            line_items=[{'price': prices.data[0].id, 'quantity': 1}],
+            mode='subscription',
+            success_url='https://progressbillpro.com',
+            cancel_url='https://progressbillpro.com'
+        )
         return session.url, None
     except Exception as e: return None, str(e)
 
@@ -323,7 +363,6 @@ if COOKIE_MANAGER_AVAILABLE:
 
 # --- AUTO-LOGIN VIA COOKIES ---
 if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE:
-    # Small delay to ensure cookie manager is ready
     time.sleep(0.1)
     cookies = cookie_manager.get_all()
     user_cookie = cookies.get("progressbill_user")
@@ -348,14 +387,12 @@ if st.session_state.user_id is None:
         st.title("ProgressBill Pro")
         st.caption("Powered by Balance & Build Consulting")
 
-    # Tabs for Login and Signup
     tab1, tab2 = st.tabs(["Login", "Signup (Start Free Trial)"])
 
     # --- TAB 1: LOGIN (Password + OTP) ---
     with tab1:
         login_mode = st.radio("Login Method:", ["Password", "Forgot Password / Login with Code"], label_visibility="collapsed")
 
-        # OPTION A: Standard Password Login
         if login_mode == "Password":
             with st.form("login_form"):
                 u = st.text_input("Username").lower().strip()
@@ -364,13 +401,11 @@ if st.session_state.user_id is None:
                 submitted = st.form_submit_button("Login")
 
                 if submitted:
-                    # Query your SQL Database
                     df = run_query("SELECT id, password, email, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE username=:u", params={"u": u})
                     
                     if not df.empty:
                         rec = df.iloc[0]
                         if check_password(p, rec['password']):
-                            # SUCCESS: Set Session State
                             st.session_state.user_id = int(rec['id'])
                             st.session_state.username = u
                             st.session_state.email = rec['email']
@@ -389,51 +424,52 @@ if st.session_state.user_id is None:
                     else:
                         st.error("Username not found")
 
-        # OPTION B: OTP / Magic Code Login
-        else:
-            st.info("Enter your email. We will send a 6-digit code to log you in.")
-            email_otp = st.text_input("Email Address", key="otp_email")
-            
-            col_a, col_b = st.columns(2)
-            
-            # Button 1: Send Code
-            if col_a.button("Send Code"):
-                if email_otp:
-                    try:
-                        supabase.auth.sign_in_with_otp({"email": email_otp})
-                        st.success("Code sent! Check your email.")
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                else:
-                    st.warning("Please enter an email.")
+        else: # OTP / Magic Code Login
+            if not supabase:
+                st.error("Email service not configured. Please contact support.")
+            else:
+                st.info("Enter your email. We will send a 6-digit code to log you in.")
+                email_otp = st.text_input("Email Address", key="otp_email")
+                
+                col_a, col_b = st.columns(2)
+                
+                # Button 1: Send Code
+                if col_a.button("Send Code"):
+                    if email_otp:
+                        try:
+                            supabase.auth.sign_in_with_otp({"email": email_otp})
+                            st.success("Code sent! Check your email.")
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                    else:
+                        st.warning("Please enter an email.")
 
-            # Button 2: Verify & Connect to DB
-            otp_token = st.text_input("Enter 6-digit Code", key="otp_code")
-            if col_b.button("Verify & Login"):
-                if email_otp and otp_token:
-                    try:
-                        # 1. Verify with Supabase Auth
-                        res = supabase.auth.verify_otp({"email": email_otp, "token": otp_token, "type": "email"})
-                        
-                        # 2. BRIDGE: Find this user in SQL Database via Email
-                        df = run_query("SELECT id, username, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE email=:e", params={"e": email_otp})
-                        
-                        if not df.empty:
-                            rec = df.iloc[0]
-                            st.session_state.user_id = int(rec['id'])
-                            st.session_state.username = rec['username']
-                            st.session_state.email = email_otp
-                            st.session_state.sub_status = rec['subscription_status']
-                            st.session_state.stripe_cid = rec['stripe_customer_id']
-                            st.session_state.created_at = rec['created_at']
-                            st.session_state.my_ref_code = rec['referral_code']
+                # Button 2: Verify & Connect to DB
+                otp_token = st.text_input("Enter 6-digit Code", key="otp_code")
+                if col_b.button("Verify & Login"):
+                    if email_otp and otp_token:
+                        try:
+                            res = supabase.auth.verify_otp({"email": email_otp, "token": otp_token, "type": "email"})
                             
-                            st.success("Verified! Logging you in...")
-                            st.rerun()
-                        else:
-                            st.error("Login verified, but we couldn't find your account details in the database.")
-                    except Exception as e:
-                        st.error(f"Invalid Code or Error: {e}")
+                            # Bridge to SQL Database
+                            df = run_query("SELECT id, username, subscription_status, stripe_customer_id, created_at, referral_code FROM users WHERE email=:e", params={"e": email_otp})
+                            
+                            if not df.empty:
+                                rec = df.iloc[0]
+                                st.session_state.user_id = int(rec['id'])
+                                st.session_state.username = rec['username']
+                                st.session_state.email = email_otp
+                                st.session_state.sub_status = rec['subscription_status']
+                                st.session_state.stripe_cid = rec['stripe_customer_id']
+                                st.session_state.created_at = rec['created_at']
+                                st.session_state.my_ref_code = rec['referral_code']
+                                
+                                st.success("Verified! Logging you in...")
+                                st.rerun()
+                            else:
+                                st.error("Login verified, but we couldn't find your account details in the database.")
+                        except Exception as e:
+                            st.error(f"Invalid Code or Error: {e}")
 
     # --- TAB 2: SIGNUP ---
     with tab2:
@@ -460,12 +496,12 @@ if st.session_state.user_id is None:
                         if not check.empty:
                             st.error("Username already taken.")
                         else:
-                            # 1. Register in Supabase Auth (Crucial for OTP support)
-                            try:
-                                supabase.auth.sign_up({"email": e, "password": p})
-                            except Exception as auth_err:
-                                # Start soft warning if user already exists in Auth but not DB
-                                print(f"Auth warning: {auth_err}")
+                            # 1. Register in Supabase Auth
+                            if supabase:
+                                try:
+                                    supabase.auth.sign_up({"email": e, "password": p})
+                                except Exception as auth_err:
+                                    print(f"Auth warning: {auth_err}")
 
                             # 2. Register in SQL Database
                             h_p = hash_password(p)
@@ -491,26 +527,24 @@ else:
     user_id = st.session_state.user_id
     curr_username = st.session_state.username
     
-    # Reload Context to check for status updates
-    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by FROM users WHERE id=:id", params={"id": user_id})
+    # Reload Context (FIXED: Now includes logo_data, company_name)
+    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty:
         st.session_state.clear()
         st.rerun()
     
     row = df_user.iloc[0]
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
+    c_name, c_addr, logo = row['company_name'], row['company_address'], row['logo_data']
     
     # --- PRICING & SUBSCRIPTION LOGIC ---
-    # 1. Calculate Discounts
     active_referrals, discount_percent_earned = get_referral_stats(my_code)
     discount_from_affiliate = 10 if referred_by else 0
     total_discount = min(discount_percent_earned + discount_from_affiliate, 100)
     
-    # 2. Base Price
-    BASE_PRICE = 99.00
     final_price = BASE_PRICE * (1 - (total_discount / 100))
 
-    # 3. Check Trial Status
+    # Check Trial
     days_left = 0
     trial_active = False
     if status == 'Trial' and created_at_str:
@@ -532,12 +566,10 @@ else:
         st.stop()
 
     # --- SUBSCRIPTION ENFORCEMENT ---
-    # Block access if Trial is over AND not Active AND not Admin
     if status != 'Active' and not trial_active and curr_username != ADMIN_USERNAME:
         st.markdown("## 🔒 Subscription Required")
         st.error("Your Free Trial has expired.")
         
-        # Pricing Explanation Card
         st.divider()
         st.subheader("Plan Details")
         col_p1, col_p2, col_p3 = st.columns(3)
@@ -556,14 +588,12 @@ else:
                 st.session_state.sub_status = 'Active'
                 st.rerun()
         else:
-            # Payment Button
             if st.session_state.stripe_cid:
-                # We pass the 'total_discount' to helper so Stripe creates a coupon or adjusted price
                 url, err = create_checkout_session(st.session_state.stripe_cid, total_discount)
                 if url:
                     st.link_button(f"👉 Subscribe for ${final_price:.2f}/mo", url, type="primary")
                 else:
-                    st.error("Error connecting to Stripe. Please try again later.")
+                    st.error("Error connecting to Stripe.")
             
         st.markdown("---")
         if st.button("Logout"):
@@ -571,9 +601,13 @@ else:
             st.session_state.clear()
             st.rerun()
         st.stop()
+    
     # --- SIDEBAR MENU ---
     with st.sidebar:
-        if logo: st.image(logo, width=120)
+        if logo: 
+             try:
+                st.image(Image.open(io.BytesIO(logo)), width=120)
+             except: st.header(c_name or "Menu")
         else: st.header("Menu")
         col1, col2 = st.columns(2)
         with col1:
@@ -594,19 +628,34 @@ else:
                 if st.button("🚪\nLogout", use_container_width=True):
                     if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
                     st.session_state.clear(); st.rerun()
-        with st.sidebar:
-            st.divider()
-            with st.expander("📱 Install App on Mobile"):
-                st.write("To add this app to your home screen:")
-                st.markdown("""
-                **iPhone (Safari):**
-                1. Tap the **Share** button (Square with Up Arrow).
-                2. Scroll down and tap **'Add to Home Screen'**.
         
-                **Android (Chrome):**
-                1. Tap the **three dots** (top right).
-                2. Tap **'Install App'** or **'Add to Home Screen'**.
-                """)            
+        st.divider()
+        with st.expander("📱 Install App on Mobile"):
+            st.write("To add this app to your home screen:")
+            st.markdown("""
+            **iPhone (Safari):**
+            1. Tap the **Share** button.
+            2. Tap **'Add to Home Screen'**.
+    
+            **Android (Chrome):**
+            1. Tap the **three dots**.
+            2. Tap **'Install App'**.
+            """)   
+        
+        # Change Password Feature
+        st.divider()
+        with st.expander("🔒 Change Password"):
+            new_pass = st.text_input("New Password", type="password")
+            if st.button("Update Password"):
+                if supabase:
+                    try:
+                        supabase.auth.update_user({"password": new_pass})
+                        st.success("Password updated!")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
+                else:
+                    st.error("Auth service not available.")
+
         st.markdown("---"); st.caption(f"Ver: 1.0 | User: {curr_username}")
 
     page = st.session_state.page
@@ -670,7 +719,6 @@ else:
                             activity[uid][label] = r['cnt']
                 final_rows = []
                 for uid, counts in activity.items():
-                    # SAFE LOOKUP: Check if user exists before grabbing name
                     u_res = run_query("SELECT username FROM users WHERE id=:id", {"id": uid})
                     if not u_res.empty:
                         u_name = u_res.iloc[0,0]
