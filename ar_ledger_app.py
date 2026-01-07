@@ -65,7 +65,7 @@ components.html("""
 # --- ADMIN & CONSTANTS ---
 ADMIN_USERNAME = "admin" 
 AFFILIATE_COMMISSION_PER_USER = 10.00 
-STRIPE_PRICE_LOOKUP_KEY = "standard_monthly" 
+STRIPE_PRICE_LOOKUP_KEY = "pro_monthly_99" 
 BASE_PRICE = 99.00  # Updated to $99 as requested
 BB_WATERMARK = "ProgressBill Pro | Powered by Balance & Build Consulting"
 TERMS_URL = "https://balanceandbuildconsulting.com/wp-content/uploads/2025/12/Balance-Build-Consulting-LLC_Software-as-a-Service-SaaS-Terms-of-Service-and-Privacy-Policy.pdf"
