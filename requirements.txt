@@ -8,4 +8,5 @@ sqlalchemy
 psycopg2-binary
 matplotlib
 pyspellchecker
+supabase
 extra-streamlit-components
