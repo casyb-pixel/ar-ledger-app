@@ -50,6 +50,16 @@ st.set_page_config(
     layout="wide", 
     initial_sidebar_state="auto"
 )
+# --- REWARDFUL: PYTHON FALLBACK TRACKING ---
+# This bypasses the browser sandbox by capturing the 'via' code in Python directly
+if "via" in st.query_params:
+    referral_code = st.query_params["via"]
+    # 1. Save to session state for the current session
+    st.session_state.rewardful_id = referral_code
+    # 2. Save to a persistent cookie (Works even if JS is blocked)
+    if COOKIE_MANAGER_AVAILABLE:
+        cookie_manager.set("rewardful.referral", referral_code, expires_at=datetime.datetime.now() + datetime.timedelta(days=365))
+        
 # --- REWARDFUL AFFILIATE TRACKING & GOOGLE ADS ---
 REWARDFUL_API_KEY = "48a8b0" 
 
@@ -389,8 +399,8 @@ if COOKIE_MANAGER_AVAILABLE:
     cookie_manager = stx.CookieManager()
 
 # --- AUTO-LOGIN VIA COOKIES ---
-# FIX: Only check cookie if we are NOT currently logging out
-if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE and not st.session_state.get("logging_out", False):
+# FIX: Check if 'manual_logout' is set. If so, skip auto-login this one time.
+if st.session_state.user_id is None and COOKIE_MANAGER_AVAILABLE and not st.session_state.get("manual_logout", False):
     time.sleep(0.1)
     cookies = cookie_manager.get_all()
     user_cookie = cookies.get("progressbill_user")
@@ -615,22 +625,18 @@ else:
                 execute_statement("UPDATE users SET subscription_status='Active' WHERE id=:id", params={"id": user_id})
                 st.session_state.sub_status = 'Active'
                 st.rerun()
+        # ... inside the "else" block (Subscription Required) ...
         else:
             if st.session_state.stripe_cid:
-                # 1. Capture Rewardful Referral ID from Cookie or URL
-                rewardful_id = None
+                # 1. Try to find the referral ID in Session or Cookies
+                rewardful_id = st.session_state.get("rewardful_id")
                 
-                # Check Query Params first
-                if "via" in st.query_params:
-                    # Capture query param if present
-                    pass 
-
-                # Check Cookie (Best method)
-                if COOKIE_MANAGER_AVAILABLE:
+                # If not in session, check cookies
+                if not rewardful_id and COOKIE_MANAGER_AVAILABLE:
                     cookies = cookie_manager.get_all()
                     rewardful_id = cookies.get("rewardful.referral")
-
-                # 2. Create Checkout Session with Referral ID
+                
+                # 2. Create the session
                 url, err = create_checkout_session(st.session_state.stripe_cid, total_discount, referral_id=rewardful_id)
                 
                 if url:
@@ -663,25 +669,21 @@ else:
         with col2:
             if curr_username == ADMIN_USERNAME:
                  if st.button("🚪\nLogout", use_container_width=True):
-                    # 1. Flag session as 'logging out' so auto-login doesn't trigger
-                    st.session_state.logging_out = True
-                    # 2. Delete the cookie
                     if COOKIE_MANAGER_AVAILABLE:
-                         cookie_manager.delete("progressbill_user")
-                    # 3. Clear state and rerun
+                        cookie_manager.delete("progressbill_user")
+                    # Clear session but set a flag saying "I just logged out manually"
                     st.session_state.clear()
+                    st.session_state['manual_logout'] = True
                     st.rerun()
             else:
                 if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
                 if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
                 if st.button("🚪\nLogout", use_container_width=True):
-                    # 1. Flag session as 'logging out'
-                    st.session_state.logging_out = True
-                    # 2. Delete the cookie
                     if COOKIE_MANAGER_AVAILABLE:
-                         cookie_manager.delete("progressbill_user")
-                    # 3. Clear state and rerun
+                        cookie_manager.delete("progressbill_user")
+                    # Clear session but set a flag saying "I just logged out manually"
                     st.session_state.clear()
+                    st.session_state['manual_logout'] = True
                     st.rerun()
         
         st.divider()
@@ -992,6 +994,7 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
 
 
 
