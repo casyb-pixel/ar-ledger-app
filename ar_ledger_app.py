@@ -572,14 +572,17 @@ else:
     curr_username = st.session_state.username
     
     # Reload Context
-    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data FROM users WHERE id=:id", params={"id": user_id})
+    # FIX: Added 'terms_conditions' to the SELECT query so the PDF generator can find it
+    df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty:
         st.session_state.clear()
         st.rerun()
     
     row = df_user.iloc[0]
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
-    c_name, c_addr, logo = row['company_name'], row['company_address'], row['logo_data']
+    
+    # FIX: Unpack 'terms_conditions' into the variable 'terms'
+    c_name, c_addr, logo, terms = row['company_name'], row['company_address'], row['logo_data'], row['terms_conditions']
     
     # --- PRICING & SUBSCRIPTION LOGIC ---
     active_referrals, discount_percent_earned = get_referral_stats(my_code)
@@ -999,3 +1002,4 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
