@@ -66,11 +66,17 @@ components.html(f"""
     (function(w,r){{w._rwq=r;w[r]=w[r]||function(){{(w[r].q=w[r].q||[]).push(arguments)}};
     w[r].q=w[r].q||[];}})(window,'rewardful');
 
-    // Note: We removed the invalid 'set' command. 
-    // The API key is handled automatically by the data-rewardful attribute below.
-
     rewardful('ready', function() {{
-        console.log("Rewardful is Ready and Tracking!");
+        console.log("Rewardful Tracking Active!");
+        
+        // --- FORCE COOKIE FIX ---
+        // This attempts to write the referral ID to the main window explicitly
+        try {{
+            if (Rewardful && Rewardful.referral) {{
+                document.cookie = "rewardful.referral=" + Rewardful.referral + "; path=/; domain=.progressbillpro.com; max-age=31536000; SameSite=Lax";
+                console.log("Forced Cookie Write: " + Rewardful.referral);
+            }}
+        }} catch(e) {{ console.log("Cookie Force Failed: " + e); }}
     }});
     </script>
     <script async src='https://r.wdfl.co/rw.js' data-rewardful='{REWARDFUL_API_KEY}'></script>
@@ -652,14 +658,20 @@ else:
         with col2:
             if curr_username == ADMIN_USERNAME:
                  if st.button("🚪\nLogout", use_container_width=True):
-                    if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-                    st.session_state.clear(); st.rerun()
+                    if COOKIE_MANAGER_AVAILABLE:
+                        # FORCE DELETE: Overwrite cookie with empty data and past expiration
+                        cookie_manager.set("progressbill_user", "", key="logout_admin_force", expires_at=datetime.datetime.now() - datetime.timedelta(days=1))
+                    st.session_state.clear()
+                    st.rerun()
             else:
                 if st.button("📁\nProjs", use_container_width=True): st.session_state.page = "Projects"
                 if st.button("💰\nPay", use_container_width=True): st.session_state.page = "Payments"
                 if st.button("🚪\nLogout", use_container_width=True):
-                    if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
-                    st.session_state.clear(); st.rerun()
+                    if COOKIE_MANAGER_AVAILABLE:
+                        # FORCE DELETE: Overwrite cookie with empty data and past expiration
+                        cookie_manager.set("progressbill_user", "", key="logout_user_force", expires_at=datetime.datetime.now() - datetime.timedelta(days=1))
+                    st.session_state.clear()
+                    st.rerun()
         
         st.divider()
         with st.expander("📱 Install App on Mobile"):
@@ -969,5 +981,6 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
 
 
