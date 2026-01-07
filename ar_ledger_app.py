@@ -50,11 +50,9 @@ st.set_page_config(
     layout="wide", 
     initial_sidebar_state="auto"
 )
-
 # --- REWARDFUL AFFILIATE TRACKING & GOOGLE ADS ---
 REWARDFUL_API_KEY = "48a8b0" 
 
-# We combine both scripts here to ensure they load immediately at the top of the page
 components.html(f"""
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-Z6JK5NFPE3"></script>
     <script>
@@ -67,10 +65,12 @@ components.html(f"""
     <script>
     (function(w,r){{w._rwq=r;w[r]=w[r]||function(){{(w[r].q=w[r].q||[]).push(arguments)}};
     w[r].q=w[r].q||[];}})(window,'rewardful');
-    
-    rewardful('set', 'publisher_id', '{REWARDFUL_API_KEY}');
+
+    // Note: We removed the invalid 'set' command. 
+    // The API key is handled automatically by the data-rewardful attribute below.
+
     rewardful('ready', function() {{
-        console.log("Rewardful is Ready!");
+        console.log("Rewardful is Ready and Tracking!");
     }});
     </script>
     <script async src='https://r.wdfl.co/rw.js' data-rewardful='{REWARDFUL_API_KEY}'></script>
@@ -969,4 +969,5 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
 
