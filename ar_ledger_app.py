@@ -472,6 +472,19 @@ else:
                 if st.button("🚪\nLogout", use_container_width=True):
                     if COOKIE_MANAGER_AVAILABLE: cookie_manager.delete("progressbill_user")
                     st.session_state.clear(); st.rerun()
+        with st.sidebar:
+            st.divider()
+            with st.expander("📱 Install App on Mobile"):
+                st.write("To add this app to your home screen:")
+                st.markdown("""
+                **iPhone (Safari):**
+                1. Tap the **Share** button (Square with Up Arrow).
+                2. Scroll down and tap **'Add to Home Screen'**.
+        
+                **Android (Chrome):**
+                1. Tap the **three dots** (top right).
+                2. Tap **'Install App'** or **'Add to Home Screen'**.
+                """)            
         st.markdown("---"); st.caption(f"Ver: 1.0 | User: {curr_username}")
 
     page = st.session_state.page
