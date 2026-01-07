@@ -50,7 +50,14 @@ st.set_page_config(
     layout="wide", 
     initial_sidebar_state="auto"
 )
-# --- REWARDFUL: PYTHON FALLBACK TRACKING ---
+
+# --- 3. INITIALIZE COOKIE MANAGER (MUST BE HERE) ---
+# We initialize this immediately so it is available for tracking logic below
+cookie_manager = None
+if COOKIE_MANAGER_AVAILABLE:
+    cookie_manager = stx.CookieManager()
+
+# --- 4. REWARDFUL: PYTHON FALLBACK TRACKING ---
 # This bypasses the browser sandbox by capturing the 'via' code in Python directly
 if "via" in st.query_params:
     referral_code = st.query_params["via"]
@@ -58,9 +65,13 @@ if "via" in st.query_params:
     st.session_state.rewardful_id = referral_code
     # 2. Save to a persistent cookie (Works even if JS is blocked)
     if COOKIE_MANAGER_AVAILABLE:
-        cookie_manager.set("rewardful.referral", referral_code, expires_at=datetime.datetime.now() + datetime.timedelta(days=365))
-        
-# --- REWARDFUL AFFILIATE TRACKING & GOOGLE ADS ---
+        # Wrapped in try/except to prevent startup crashes
+        try:
+            cookie_manager.set("rewardful.referral", referral_code, expires_at=datetime.datetime.now() + datetime.timedelta(days=365))
+        except Exception as e:
+            print(f"Cookie set skipped: {e}")
+
+# --- 5. REWARDFUL AFFILIATE TRACKING & GOOGLE ADS ---
 REWARDFUL_API_KEY = "48a8b0" 
 
 components.html(f"""
@@ -78,7 +89,6 @@ components.html(f"""
 
     rewardful('ready', function() {{
         console.log("Rewardful Active. Attempting Cookie Write...");
-        
         try {{
             if (Rewardful && Rewardful.referral) {{
                 // TARGET THE PARENT WINDOW 
@@ -88,8 +98,6 @@ components.html(f"""
             }}
         }} catch(e) {{ 
             console.log("Parent Cookie Write Failed (Cross-Origin?): " + e);
-            // Fallback: Write to current window just in case
-            document.cookie = "rewardful.referral=" + Rewardful.referral + "; path=/; domain=.progressbillpro.com; max-age=31536000; SameSite=Lax";
         }}
     }});
     </script>
@@ -393,10 +401,8 @@ if 'user_id' not in st.session_state: st.session_state.user_id = None
 if 'username' not in st.session_state: st.session_state.username = ""
 if 'page' not in st.session_state: st.session_state.page = "Dashboard"
 
-# --- COOKIE MANAGER SETUP ---
-cookie_manager = None
-if COOKIE_MANAGER_AVAILABLE:
-    cookie_manager = stx.CookieManager()
+# --- COOKIE MANAGER SETUP (ALREADY DONE AT TOP) ---
+# We do not re-initialize here to avoid errors.
 
 # --- AUTO-LOGIN VIA COOKIES ---
 # FIX: Check if 'manual_logout' is set. If so, skip auto-login this one time.
@@ -625,7 +631,6 @@ else:
                 execute_statement("UPDATE users SET subscription_status='Active' WHERE id=:id", params={"id": user_id})
                 st.session_state.sub_status = 'Active'
                 st.rerun()
-        # ... inside the "else" block (Subscription Required) ...
         else:
             if st.session_state.stripe_cid:
                 # 1. Try to find the referral ID in Session or Cookies
@@ -994,8 +999,3 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
-
-
-
-
-
