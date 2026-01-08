@@ -311,6 +311,71 @@ def generate_statement_pdf(ledger_df, logo_data, company_info, project_name, cli
         pdf.cell(30, 8, str(row['Date']), 1, 0, 'C', fill); pdf.cell(80, 8, clean_text(str(row['Details'])[:40]), 1, 0, 'L', fill); pdf.cell(25, 8, f"${row['Charge']:,.2f}", 1, 0, 'R', fill); pdf.cell(25, 8, f"${row['Payment']:,.2f}", 1, 0, 'R', fill); pdf.cell(30, 8, f"${row['Balance']:,.2f}", 1, 1, 'R', fill); fill = not fill
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
+def generate_dashboard_pdf(metrics, company_name, logo_data, chart_data):
+    pdf = BB_PDF()
+    pdf.add_page()
+    
+    # Logo
+    if logo_data:
+        try:
+            image = Image.open(io.BytesIO(logo_data))
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                image.save(tmp, format="PNG")
+                tmp_path = tmp.name
+            pdf.image(tmp_path, 10, 10, 35)
+            os.unlink(tmp_path)
+        except:
+            pass
+
+    # Header
+    pdf.set_xy(50, 15)
+    pdf.set_font("Arial", "B", 16)
+    pdf.set_text_color(43, 88, 141) # Brand Blue
+    pdf.cell(0, 10, f"EXECUTIVE DASHBOARD REPORT", ln=1, align='R')
+    
+    pdf.set_font("Arial", size=10)
+    pdf.set_text_color(0, 0, 0)
+    pdf.cell(0, 5, f"Company: {clean_text(company_name)}", ln=1, align='R')
+    pdf.cell(0, 5, f"Date: {datetime.date.today()}", ln=1, align='R')
+    pdf.ln(15)
+
+    # Metrics Section
+    pdf.set_font("Arial", "B", 14)
+    pdf.set_text_color(43, 88, 141)
+    pdf.cell(0, 10, "FINANCIAL SNAPSHOT", ln=1)
+    pdf.ln(2)
+    
+    pdf.set_font("Arial", size=12)
+    pdf.set_text_color(0, 0, 0)
+    
+    # Draw a simple table or list for metrics
+    for key, value in metrics.items():
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(60, 8, clean_text(key), 1)
+        pdf.set_font("Arial", size=11)
+        pdf.cell(40, 8, clean_text(str(value)), 1, 1, 'R')
+        
+    pdf.ln(10)
+    
+    # Chart Data Summary (Breakdown)
+    pdf.set_font("Arial", "B", 14)
+    pdf.set_text_color(43, 88, 141)
+    pdf.cell(0, 10, "BREAKDOWN", ln=1)
+    pdf.ln(2)
+    
+    pdf.set_font("Arial", size=11)
+    pdf.set_text_color(0, 0, 0)
+    
+    # Table Header
+    pdf.cell(60, 8, "Category", 1, 0, 'C', fill=False)
+    pdf.cell(40, 8, "Amount ($)", 1, 1, 'R', fill=False)
+    
+    for cat, amt in chart_data.items():
+        pdf.cell(60, 8, clean_text(cat), 1)
+        pdf.cell(40, 8, f"{amt:,.2f}", 1, 1, 'R')
+
+    return pdf.output(dest='S').encode('latin-1', 'replace')
+
 def create_checkout_session(customer_id, discount_percent, referral_id=None):
     try:
         prices = stripe.Price.list(lookup_keys=[STRIPE_PRICE_LOOKUP_KEY], limit=1)
