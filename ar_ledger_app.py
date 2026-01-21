@@ -301,7 +301,7 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
     pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); date_str = str(inv_data['date']) 
-pdf.cell(0, 5, f"DATE: {date_str}", ln=1, align='R')
+    pdf.cell(0, 5, f"DATE: {date_str}", ln=1, align='R')
     if project_info.get('po_number'): pdf.cell(0, 5, f"PO #: {clean_text(project_info['po_number'])}", ln=1, align='R')
     pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, clean_text(project_info['client_name']), ln=1)
@@ -1040,4 +1040,5 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
 
