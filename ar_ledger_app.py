@@ -125,7 +125,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. CONNECTIONS SETUP ---
+# --- 4. CONNECTIONS SETUP (STRICT CLOUD UPGRADE) ---
+import os # Ensure this is imported
 
 if "STRIPE_SECRET_KEY" in st.secrets:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
@@ -136,11 +137,21 @@ else:
 
 @st.cache_resource
 def get_engine():
-    try:
-        db_url = st.secrets["connections"]["supabase"]["url"]
-        return create_engine(db_url, poolclass=NullPool)
-    except Exception as e:
-        return None
+    # 1. Look for the Render Environment Variable
+    db_url = os.environ.get("SUPABASE_DB_URL")
+    
+    # 2. Fallback to Streamlit secrets ONLY if Env Var is missing (Local Dev safety)
+    if not db_url and "connections" in st.secrets:
+         try: db_url = st.secrets["connections"]["supabase"]["url"]
+         except: pass
+
+    if not db_url: return None
+
+    # 3. Protocol Fix for SQLAlchemy
+    if db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql://", 1)
+        
+    return create_engine(db_url, pool_pre_ping=True)
 
 engine = get_engine()
 
@@ -179,6 +190,7 @@ def init_db():
     if not engine: return
     try:
         with engine.begin() as conn:
+            # SHARED USERS TABLE
             conn.execute(text('''CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT,
                 logo_data BYTEA, terms_conditions TEXT, company_name TEXT, company_address TEXT, 
@@ -186,22 +198,33 @@ def init_db():
                 stripe_customer_id TEXT, stripe_subscription_id TEXT, referral_code TEXT UNIQUE, 
                 referral_count INTEGER DEFAULT 0, referred_by TEXT
             )'''))
+            
+            # SHARED PROJECTS TABLE (UPDATED types to match BalanceBuild)
             conn.execute(text('''CREATE TABLE IF NOT EXISTS projects (
                 id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, client_name TEXT,
-                quoted_price REAL, start_date TEXT, duration INTEGER,
+                quoted_price NUMERIC(14,2), start_date DATE, duration_days INTEGER,
                 billing_street TEXT, billing_city TEXT, billing_state TEXT, billing_zip TEXT,
                 site_street TEXT, site_city TEXT, site_state TEXT, site_zip TEXT,
-                is_tax_exempt INTEGER DEFAULT 0, po_number TEXT, status TEXT DEFAULT 'Bidding', scope_of_work TEXT
+                is_tax_exempt INTEGER DEFAULT 0, po_number TEXT, status TEXT DEFAULT 'Bidding', scope_of_work TEXT,
+                retainage_percent NUMERIC(5,2) DEFAULT 0.00,
+                non_working_days TEXT DEFAULT '[]', project_type TEXT DEFAULT 'Residential', scope TEXT
             )'''))
+            
+            # SHARED INVOICES TABLE (UPDATED types)
             conn.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
                 id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, invoice_num INTEGER, 
-                amount REAL, issue_date TEXT, description TEXT, tax REAL DEFAULT 0
+                amount NUMERIC(14,2), issue_date DATE, description TEXT, tax NUMERIC(14,2) DEFAULT 0,
+                amount_billed NUMERIC(14,2), retainage_held NUMERIC(14,2), amount_due NUMERIC(14,2), type TEXT DEFAULT 'Standard'
             )'''))
+            
+            # SHARED PAYMENTS TABLE
             conn.execute(text('''CREATE TABLE IF NOT EXISTS payments (
-                id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount REAL, 
-                payment_date TEXT, notes TEXT
+                id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount NUMERIC(14,2), 
+                payment_date DATE, notes TEXT
             )'''))
-    except: pass 
+    except Exception as e: 
+        # Pass on error is safer for shared DBs to avoid "Table exists" blocking
+        pass 
 
 init_db()
 
@@ -277,7 +300,8 @@ def generate_pdf_invoice(inv_data, logo_data, company_info, project_info, terms)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, c_addr_txt, align='R')
     pdf.set_xy(120, 35); pdf.set_font("Arial", "B", 16); pdf.set_text_color(43, 88, 141)
     pdf.cell(0, 10, f"INVOICE #{inv_data['number']}", ln=1, align='R')
-    pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); pdf.cell(0, 5, f"DATE: {inv_data['date']}", ln=1, align='R')
+    pdf.set_font("Arial", "B", 10); pdf.set_text_color(0, 0, 0); date_str = str(inv_data['date']) 
+pdf.cell(0, 5, f"DATE: {date_str}", ln=1, align='R')
     if project_info.get('po_number'): pdf.cell(0, 5, f"PO #: {clean_text(project_info['po_number'])}", ln=1, align='R')
     pdf.set_xy(10, 60); pdf.set_font("Arial", "B", 10); pdf.cell(0, 5, "BILL TO:", ln=1)
     pdf.set_font("Arial", size=10); pdf.cell(0, 5, clean_text(project_info['client_name']), ln=1)
@@ -429,8 +453,11 @@ if st.session_state.user_id is None:
     if os.path.exists("BB_logo.png"):
         st.image("BB_logo.png", width=200)
     else:
-        st.title("ProgressBill Pro")
-        st.caption("Powered by Balance & Build Consulting")
+        # Fallback to the hosted image if local file missing
+        st.image("https://balanceandbuildconsulting.com/wp-content/uploads/2026/01/BalanceBuild-Pro-Logo.png", width=200)
+        
+    st.title("ProgressBill Pro")
+    st.caption("Powered by Balance & Build Consulting")
 
     tab1, tab2 = st.tabs(["Login", "Signup (Start Free Trial)"])
 
@@ -1013,3 +1040,4 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
+
