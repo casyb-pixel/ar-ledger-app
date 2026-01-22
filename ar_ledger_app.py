@@ -126,8 +126,6 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- 4. CONNECTIONS SETUP (STRICT CLOUD UPGRADE) ---
-import os # Ensure this is imported
-
 if "STRIPE_SECRET_KEY" in st.secrets:
     stripe.api_key = st.secrets["STRIPE_SECRET_KEY"]
     STRIPE_PUBLISHABLE_KEY = st.secrets.get("STRIPE_PUBLISHABLE_KEY", "")
@@ -186,11 +184,12 @@ def execute_statement(query, params=None):
         st.error(f"Database Error: {e}")
         raise e
 
+# --- FIXED: DATABASE INITIALIZATION WITH AUTO-MIGRATION ---
 def init_db():
     if not engine: return
     try:
         with engine.begin() as conn:
-            # SHARED USERS TABLE
+            # 1. USERS TABLE
             conn.execute(text('''CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, email TEXT,
                 logo_data BYTEA, terms_conditions TEXT, company_name TEXT, company_address TEXT, 
@@ -199,7 +198,7 @@ def init_db():
                 referral_count INTEGER DEFAULT 0, referred_by TEXT
             )'''))
             
-            # SHARED PROJECTS TABLE (UPDATED types to match BalanceBuild)
+            # 2. PROJECTS TABLE (Shared Schema)
             conn.execute(text('''CREATE TABLE IF NOT EXISTS projects (
                 id SERIAL PRIMARY KEY, user_id INTEGER, name TEXT, client_name TEXT,
                 quoted_price NUMERIC(14,2), start_date DATE, duration_days INTEGER,
@@ -209,21 +208,43 @@ def init_db():
                 retainage_percent NUMERIC(5,2) DEFAULT 0.00,
                 non_working_days TEXT DEFAULT '[]', project_type TEXT DEFAULT 'Residential', scope TEXT
             )'''))
-            
-            # SHARED INVOICES TABLE (UPDATED types)
+
+            # 3. INVOICES TABLE (Shared Schema)
             conn.execute(text('''CREATE TABLE IF NOT EXISTS invoices (
                 id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, invoice_num INTEGER, 
                 amount NUMERIC(14,2), issue_date DATE, description TEXT, tax NUMERIC(14,2) DEFAULT 0,
                 amount_billed NUMERIC(14,2), retainage_held NUMERIC(14,2), amount_due NUMERIC(14,2), type TEXT DEFAULT 'Standard'
             )'''))
             
-            # SHARED PAYMENTS TABLE
+            # 4. PAYMENTS TABLE
             conn.execute(text('''CREATE TABLE IF NOT EXISTS payments (
                 id SERIAL PRIMARY KEY, user_id INTEGER, project_id INTEGER, amount NUMERIC(14,2), 
                 payment_date DATE, notes TEXT
             )'''))
+
+            # --- MIGRATION STEPS: FIX "COLUMN DOES NOT EXIST" ERRORS ---
+            # If tables exist from BalanceBuild Pro but are missing AR Ledger columns, add them now.
+            
+            # Fix 'invoices' table missing 'amount' (This fixes your error!)
+            try: conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS amount NUMERIC(14,2)"))
+            except: pass # Fallback for older Postgres
+            
+            # Fix 'invoices' table missing 'amount_billed' etc (Shared Schema compatibility)
+            try: conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS amount_billed NUMERIC(14,2)"))
+            except: pass
+            try: conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS retainage_held NUMERIC(14,2)"))
+            except: pass
+            try: conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS amount_due NUMERIC(14,2)"))
+            except: pass
+            
+            # Fix 'projects' table shared schema columns
+            try: conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS retainage_percent NUMERIC(5,2) DEFAULT 0.00"))
+            except: pass
+            try: conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS non_working_days TEXT DEFAULT '[]'"))
+            except: pass
+
     except Exception as e: 
-        # Pass on error is safer for shared DBs to avoid "Table exists" blocking
+        print(f"DB Init Warning: {e}")
         pass 
 
 init_db()
@@ -603,7 +624,6 @@ else:
     curr_username = st.session_state.username
     
     # Reload Context
-    # FIX: Explicitly selecting 'terms_conditions' to prevent NameError later
     df_user = run_query("SELECT subscription_status, created_at, referral_code, referred_by, company_name, company_address, logo_data, terms_conditions FROM users WHERE id=:id", params={"id": user_id})
     if df_user.empty:
         st.session_state.clear()
@@ -612,7 +632,6 @@ else:
     row = df_user.iloc[0]
     status, created_at_str, my_code, referred_by = row['subscription_status'], row['created_at'], row['referral_code'], row['referred_by']
     
-    # FIX: Map 'terms_conditions' from DB to the variable 'terms'
     c_name, c_addr, logo, terms = row['company_name'], row['company_address'], row['logo_data'], row['terms_conditions']
     
     # --- PRICING & SUBSCRIPTION LOGIC ---
@@ -645,7 +664,7 @@ else:
             st.rerun()
         st.stop()
 
-    # --- SUBSCRIPTION ENFORCEMENT ---
+    # --- SUBSCRIPTION ENFORCEMENT (FIXED) ---
     if status != 'Active' and not trial_active and curr_username != ADMIN_USERNAME:
         st.markdown("## 🔒 Subscription Required")
         st.error("Your Free Trial has expired.")
@@ -668,7 +687,23 @@ else:
                 st.session_state.sub_status = 'Active'
                 st.rerun()
         else:
-            if st.session_state.stripe_cid:
+            # --- FIX FOR MISSING STRIPE CUSTOMER IDS ---
+            current_cid = st.session_state.stripe_cid
+            
+            # If user has no Stripe ID (migration issue or old account), create one now
+            if not current_cid:
+                try:
+                    user_email = st.session_state.get('email', f"{curr_username}@example.com")
+                    new_cid = create_stripe_customer(user_email, curr_username)
+                    if new_cid:
+                        execute_statement("UPDATE users SET stripe_customer_id=:cid WHERE id=:uid", {"cid": new_cid, "uid": user_id})
+                        st.session_state.stripe_cid = new_cid
+                        current_cid = new_cid
+                except Exception as e:
+                    st.error(f"Could not generate payment profile: {e}")
+
+            # Now try to generate the link
+            if current_cid:
                 # 1. PRIMARY: Get ID from the Database (Permanent)
                 rewardful_id = referred_by
                 
@@ -680,12 +715,15 @@ else:
                         rewardful_id = cookies.get("rewardful.referral")
                 
                 # 3. Create the session
-                url, err = create_checkout_session(st.session_state.stripe_cid, total_discount, referral_id=rewardful_id)
+                url, err = create_checkout_session(current_cid, total_discount, referral_id=rewardful_id)
                 
                 if url:
                     st.link_button(f"👉 Subscribe for ${final_price:.2f}/mo", url, type="primary")
-                else:
-                    st.error("Error connecting to Stripe.")
+                elif err:
+                     st.error(f"Stripe Configuration Error: {err}")
+                     st.info(f"Check that price lookup key '{STRIPE_PRICE_LOOKUP_KEY}' exists in Stripe.")
+            else:
+                st.error("Account error: Missing Customer ID. Please contact support.")
             
         st.markdown("---")
         if st.button("Logout"):
@@ -744,7 +782,6 @@ else:
         
         # Change Password Feature
         st.divider()
-        # FIX: Corrected indentation for the Expander block
         with st.expander("🔒 Change Password"):
             new_pass = st.text_input("New Password", type="password")
             if st.button("Update Password"):
@@ -895,7 +932,7 @@ else:
             p_choice = st.selectbox("Select Project", projs['name'])
             p_id = int(projs[projs['name'] == p_choice]['id'].values[0])
             client_name = projs[projs['name'] == p_choice]['client_name'].values[0]
-            p_row = run_query("SELECT quoted_price, start_date, duration, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
+            p_row = run_query("SELECT quoted_price, start_date, duration_days, status FROM projects WHERE id=:id", {"id": p_id}).iloc[0]
             p_quoted = p_row['quoted_price'] or 0.0
             df_inv = run_query("SELECT issue_date, invoice_num, amount, description FROM invoices WHERE project_id=:pid", {"pid": p_id})
             df_pay = run_query("SELECT payment_date, amount, notes FROM payments WHERE project_id=:pid", {"pid": p_id})
@@ -936,7 +973,7 @@ else:
                 submitted = st.form_submit_button("Create Project")
                 if submitted:
                     q = parse_currency(q_str)
-                    execute_statement("INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)", params={"uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, "bs": b_street, "bc": b_city, "bst": b_state, "bz": b_zip, "ss": s_street, "sc": s_city, "sst": s_state, "sz": s_zip, "ite": 1 if is_tax_exempt else 0, "po": po, "stat": status, "scope": scope})
+                    execute_statement("INSERT INTO projects (user_id, name, client_name, quoted_price, start_date, duration_days, billing_street, billing_city, billing_state, billing_zip, site_street, site_city, site_state, site_zip, is_tax_exempt, po_number, status, scope_of_work) VALUES (:uid, :n, :c, :q, :sd, :d, :bs, :bc, :bst, :bz, :ss, :sc, :sst, :sz, :ite, :po, :stat, :scope)", params={"uid": user_id, "n": n, "c": c, "q": q, "sd": str(start_d), "d": dur, "bs": b_street, "bc": b_city, "bst": b_state, "bz": b_zip, "ss": s_street, "sc": s_city, "sst": s_state, "sz": s_zip, "ite": 1 if is_tax_exempt else 0, "po": po, "stat": status, "scope": scope})
                     st.success("Project Saved"); st.rerun()
         st.markdown("### Active Projects")
         projs = run_query("SELECT id, name, client_name, status, quoted_price FROM projects WHERE user_id=:id", {"id": user_id})
@@ -1004,8 +1041,6 @@ else:
                     if inv_to_print:
                         rec = hist_inv[hist_inv['invoice_num'] == inv_to_print].iloc[0]
                         p_info_rep = {k: row[k] for k in ['name', 'client_name', 'billing_street', 'billing_city', 'billing_state', 'billing_zip', 'site_street', 'site_city', 'site_state', 'site_zip', 'po_number']}
-                        
-                        # FIX: Using 'terms' variable (which maps to 'terms_conditions')
                         pdf_rep = generate_pdf_invoice({'number': rec['invoice_num'], 'amount': rec['amount'], 'tax': rec['tax'], 'date': str(rec['issue_date']), 'description': rec['description']}, logo, {'name': c_name, 'address': c_addr}, p_info_rep, terms)
                         st.download_button(label=f"📥 Download PDF #{inv_to_print}", data=pdf_rep, file_name=f"Invoice_{rec['invoice_num']}_{row['client_name']}.pdf", mime="application/pdf")
             else:
@@ -1040,5 +1075,3 @@ else:
                 if l: lb = l.read(); execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, logo_data=:ld, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "ld": lb, "tc": t_cond, "uid": user_id})
                 else: execute_statement("UPDATE users SET company_name=:cn, company_address=:ca, terms_conditions=:tc WHERE id=:uid", {"cn": cn, "ca": ca, "tc": t_cond, "uid": user_id})
                 st.success("Profile Updated"); st.rerun()
-
-
